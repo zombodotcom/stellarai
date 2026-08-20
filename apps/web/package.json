@@ -1,0 +1,24 @@
+{
+  "name": "@stellarai/web",
+  "version": "0.0.0",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "dev": "astro dev",
+    "build": "astro build",
+    "preview": "wrangler pages dev ./dist",
+    "astro": "astro"
+  },
+  "dependencies": {
+    "@stellarai/astro-core": "*",
+    "@stellarai/catalog": "*",
+    "@stellarai/scene-api": "*",
+    "astro": "^7.2.4",
+    "three": "^0.185.1"
+  },
+  "devDependencies": {
+    "@astrojs/cloudflare": "^14.2.3",
+    "@types/three": "^0.185.4",
+    "wrangler": "^4.124.0"
+  }
+}

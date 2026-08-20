@@ -1,0 +1,12 @@
+{
+  "name": "@stellarai/astro-core",
+  "version": "0.0.0",
+  "type": "module",
+  "description": "Deterministic astrodynamics: ephemerides, coordinate frames, Lambert transfers, relativistic cruise, atmospheric entry, interstellar routing.",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": { ".": { "types": "./dist/index.d.ts", "default": "./dist/index.js" } },
+  "files": ["dist"],
+  "scripts": { "build": "tsc -b" },
+  "dependencies": { "astronomy-engine": "^2.1.19" }
+}

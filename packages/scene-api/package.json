@@ -1,0 +1,11 @@
+{
+  "name": "@stellarai/scene-api",
+  "version": "0.0.0",
+  "type": "module",
+  "description": "Typed scene-control command contract shared by the renderer and the AI tool layer.",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": { ".": { "types": "./dist/index.d.ts", "default": "./dist/index.js" } },
+  "files": ["dist"],
+  "scripts": { "build": "tsc -b" }
+}

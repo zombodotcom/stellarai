@@ -1,0 +1,28 @@
+{
+  "name": "stellarai",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "description": "Conversational 3D stellar navigator — real orbital mechanics, atmospheric entry, and interstellar routing in the browser.",
+  "engines": {
+    "node": ">=22"
+  },
+  "workspaces": [
+    "packages/*",
+    "apps/*",
+    "tools/*"
+  ],
+  "scripts": {
+    "build": "npm run build --workspaces --if-present",
+    "dev": "npm run dev -w @stellarai/web",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --build --force",
+    "lint": "eslint ."
+  },
+  "devDependencies": {
+    "@types/node": "^22.19.0",
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.11"
+  }
+}
