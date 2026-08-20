@@ -114,11 +114,11 @@ export interface StarAstrometry {
   radialVelocityKmS: number
 }
 
-export interface StateVector {
+export interface StarState {
   /** ICRS cartesian position, parsecs. */
-  position: Vec3
+  positionPc: Vec3
   /** ICRS cartesian velocity, km/s. */
-  velocity: Vec3
+  velocityKmS: Vec3
 }
 
 /**
@@ -127,7 +127,7 @@ export interface StateVector {
  * Position alone is a picture; a navigator needs velocity. Returns null when
  * the parallax gives no usable distance.
  */
-export function starStateVector(a: StarAstrometry): StateVector | null {
+export function starStateVector(a: StarAstrometry): StarState | null {
   const distancePc = parallaxToDistancePc(a.parallaxMas)
   if (distancePc === null) return null
 
@@ -150,12 +150,12 @@ export function starStateVector(a: StarAstrometry): StateVector | null {
   const vRadial = a.radialVelocityKmS
 
   return {
-    position: {
+    positionPc: {
       x: radial.x * distancePc,
       y: radial.y * distancePc,
       z: radial.z * distancePc,
     },
-    velocity: {
+    velocityKmS: {
       x: radial.x * vRadial + east.x * vEast + north.x * vNorth,
       y: radial.y * vRadial + east.y * vEast + north.y * vNorth,
       z: radial.z * vRadial + east.z * vEast + north.z * vNorth,

@@ -29,9 +29,9 @@ describe('starStateVector', () => {
       pmDecMasPerYr: 0,
       radialVelocityKmS: 0,
     })
-    expect(s!.position.x).toBeCloseTo(1, 12)
-    expect(s!.position.y).toBeCloseTo(0, 12)
-    expect(s!.position.z).toBeCloseTo(0, 12)
+    expect(s!.positionPc.x).toBeCloseTo(1, 12)
+    expect(s!.positionPc.y).toBeCloseTo(0, 12)
+    expect(s!.positionPc.z).toBeCloseTo(0, 12)
   })
 
   test('gives Proxima Centauri its published space velocity', () => {
@@ -45,7 +45,7 @@ describe('starStateVector', () => {
       pmDecMasPerYr: 769.465,
       radialVelocityKmS: -22.204,
     })!
-    const speed = Math.hypot(s.velocity.x, s.velocity.y, s.velocity.z)
+    const speed = Math.hypot(s.velocityKmS.x, s.velocityKmS.y, s.velocityKmS.z)
     expect(speed).toBeGreaterThan(32.4)
     expect(speed).toBeLessThan(32.7)
   })
