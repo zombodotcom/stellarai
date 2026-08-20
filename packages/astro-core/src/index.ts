@@ -1,1 +1,11 @@
-export const VERSION = "0.0.0"
+/**
+ * @stellarai/astro-core — deterministic astrodynamics.
+ *
+ * Pure functions. No DOM, no network, no globals. Every number a user of
+ * StellarAI ever sees traces back to something in here, and everything in
+ * here is unit-tested against published reference values.
+ */
+export * from './constants.js'
+export * from './frames.js'
+export * from './entry.js'
+export * from './relativistic.js'
