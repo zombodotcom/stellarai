@@ -12,3 +12,4 @@ export * from './relativistic.js'
 export * from './ephemeris.js'
 export * from './lambert.js'
 export * from './windows.js'
+export * from "./routing.js"
