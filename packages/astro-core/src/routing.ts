@@ -17,7 +17,7 @@
  * carry most long-distance traffic, so contracting unimportant nodes adds few
  * shortcuts. A star field connected by jump range has no such hierarchy: it is
  * a unit-disk graph, where every node looks like every other. Contraction
- * hierarchies are documented as performing poorly on exactly this graph class,
+ * hierarchies are documented as performing poorly on exactly that class,
  * because contracting a node forces shortcuts between all of its neighbours
  * and the effect compounds toward a quadratic edge count.
  *
@@ -42,6 +42,15 @@
  *    all-pairs scan of the real 2.55M-star catalog would be 6.5e12 distance
  *    computations and would never return.
  * 4. Edges are generated lazily, only for nodes the search actually settles.
+ *
+ * ## Build the index once
+ *
+ * At catalog scale the index build dominates everything else: over 2.55M
+ * stars a weighted query settles about 200 stars in microseconds, while
+ * building the hash takes ~1.9 seconds. Use {@link StarIndex} to pay that
+ * once and keep it. {@link findRoute} is the one-shot convenience wrapper and
+ * rebuilds every call, which is fine for a handful of stars and wasteful for
+ * a catalog.
  */
 
 import type { Vec3 } from './frames.js'
@@ -53,12 +62,12 @@ export interface StarNode {
   positionPc: Vec3
 }
 
-export interface RouteSearch {
-  stars: StarNode[]
-  originId: string
-  destinationId: string
-  /** Maximum distance a single jump may cover, parsecs. */
-  maxJumpPc: number
+export interface RouteOptions {
+  /**
+   * Maximum distance a single jump may cover, parsecs. Defaults to the range
+   * the index was built for. May be lowered per query but never raised.
+   */
+  maxJumpPc?: number
   /**
    * Multiplier on the straight-line heuristic. 1, the default, searches
    * exactly. Above 1 searches faster and returns a route guaranteed to be
@@ -78,6 +87,14 @@ export interface RouteSearch {
    * heuristic stops being admissible and the optimality guarantee is void.
    */
   jumpCost?: (from: StarNode, to: StarNode, distancePc: number) => number
+}
+
+export interface RouteSearch extends RouteOptions {
+  stars: StarNode[]
+  originId: string
+  destinationId: string
+  /** Maximum distance a single jump may cover, parsecs. */
+  maxJumpPc: number
 }
 
 export interface Route {
@@ -103,48 +120,144 @@ function hashCell(cx: number, cy: number, cz: number): number {
   return (Math.imul(cx, 73856093) ^ Math.imul(cy, 19349663) ^ Math.imul(cz, 83492791)) | 0
 }
 
+/** Binary min-heap keyed on cost. Small and sufficient; no dependency needed. */
+class MinHeap {
+  private readonly index: number[] = []
+  private readonly cost: number[] = []
+
+  get size(): number {
+    return this.index.length
+  }
+
+  clear(): void {
+    this.index.length = 0
+    this.cost.length = 0
+  }
+
+  push(index: number, cost: number): void {
+    this.index.push(index)
+    this.cost.push(cost)
+    let i = this.index.length - 1
+    while (i > 0) {
+      const parent = (i - 1) >> 1
+      if (this.cost[parent]! <= this.cost[i]!) break
+      this.swap(parent, i)
+      i = parent
+    }
+  }
+
+  /** Pops the lowest-cost entry, returning its node index, or -1 if empty. */
+  pop(): number {
+    if (this.index.length === 0) return -1
+    const top = this.index[0]!
+    const lastIndex = this.index.pop()!
+    const lastCost = this.cost.pop()!
+
+    if (this.index.length > 0) {
+      this.index[0] = lastIndex
+      this.cost[0] = lastCost
+      let i = 0
+      for (;;) {
+        const l = 2 * i + 1
+        const r = l + 1
+        let smallest = i
+        if (l < this.cost.length && this.cost[l]! < this.cost[smallest]!) smallest = l
+        if (r < this.cost.length && this.cost[r]! < this.cost[smallest]!) smallest = r
+        if (smallest === i) break
+        this.swap(smallest, i)
+        i = smallest
+      }
+    }
+    return top
+  }
+
+  private swap(a: number, b: number): void {
+    const ti = this.index[a]!
+    this.index[a] = this.index[b]!
+    this.index[b] = ti
+    const tc = this.cost[a]!
+    this.cost[a] = this.cost[b]!
+    this.cost[b] = tc
+  }
+}
+
 /**
- * Uniform spatial hash. Cell size equals the jump range, so every star within
- * range of a query point lies in that point's cell or one of its 26 neighbours.
+ * A star catalog prepared for repeated route queries.
  *
- * Cells are keyed by an integer hash rather than a template string; building
- * string keys for millions of stars was measurably worse. Hash collisions are
- * harmless, because a colliding cell only adds candidates and every candidate
- * is distance-checked anyway.
+ * Building this is the expensive part; querying it is not. Over a 2.55M-star
+ * field the build takes about 1.9 seconds while a weighted query settles
+ * roughly 200 stars in microseconds, so a caller that rebuilds per query pays
+ * essentially the entire cost every time.
+ *
+ * The index holds a reference to the star array and assumes it does not
+ * change. Mutating or reordering that array after construction invalidates
+ * the index; build a new one instead.
  */
-class SpatialHash {
+export class StarIndex {
   private readonly cells = new Map<number, number[]>()
-  private readonly scratch: number[] = []
+  private readonly idToIndex = new Map<string, number>()
+  private readonly neighbourScratch: number[] = []
+
+  /** Per-query scratch, allocated once. At catalog scale these are tens of
+   * megabytes each, so reallocating them per query would undo the point. */
+  private readonly best: Float64Array
+  private readonly cameFrom: Int32Array
+  private readonly settled: Uint8Array
+  private readonly queue = new MinHeap()
+
+  /**
+   * Guards the shared scratch state. `best`, `cameFrom`, `settled`, `queue`
+   * and `neighbourScratch` are reused across queries, which makes sequential
+   * calls cheap but makes the class non-reentrant. A `jumpCost` callback that
+   * queries this same index would reset that state mid-search and leave the
+   * outer query walking a neighbour array that is no longer its own.
+   */
+  private running = false
 
   constructor(
-    private readonly stars: StarNode[],
-    private readonly cellSize: number,
+    private readonly stars: readonly StarNode[],
+    /** Jump range this index was built for, parsecs. Also the cell size. */
+    readonly maxJumpPc: number,
   ) {
+    if (!(maxJumpPc > 0)) throw new Error('Maximum jump range must be positive.')
+
     for (let i = 0; i < stars.length; i++) {
-      const p = stars[i]!.positionPc
+      const s = stars[i]!
+      this.idToIndex.set(s.id, i)
+      const p = s.positionPc
       const key = hashCell(
-        Math.floor(p.x / cellSize),
-        Math.floor(p.y / cellSize),
-        Math.floor(p.z / cellSize),
+        Math.floor(p.x / maxJumpPc),
+        Math.floor(p.y / maxJumpPc),
+        Math.floor(p.z / maxJumpPc),
       )
       const bucket = this.cells.get(key)
       if (bucket) bucket.push(i)
       else this.cells.set(key, [i])
     }
+
+    this.best = new Float64Array(stars.length)
+    this.cameFrom = new Int32Array(stars.length)
+    this.settled = new Uint8Array(stars.length)
+  }
+
+  /** Number of stars indexed. */
+  get size(): number {
+    return this.stars.length
   }
 
   /**
-   * Indices of every star within `cellSize` of the given position.
+   * Indices of every star within `radius` of a position.
    *
-   * The returned array is reused between calls, so copy it if you need to hold
-   * on to it. The search consumes it immediately, and not allocating a fresh
-   * array per settled node matters at catalog scale.
+   * The returned array is reused between calls; copy it if you need to keep
+   * it. `radius` must not exceed the index's cell size, or genuine neighbours
+   * would lie outside the 27 cells swept here and be silently missed.
    */
-  within(p: Vec3): readonly number[] {
-    const cx = Math.floor(p.x / this.cellSize)
-    const cy = Math.floor(p.y / this.cellSize)
-    const cz = Math.floor(p.z / this.cellSize)
-    const found = this.scratch
+  private within(p: Vec3, radius: number): readonly number[] {
+    const cell = this.maxJumpPc
+    const cx = Math.floor(p.x / cell)
+    const cy = Math.floor(p.y / cell)
+    const cz = Math.floor(p.z / cell)
+    const found = this.neighbourScratch
     found.length = 0
 
     for (let dx = -1; dx <= 1; dx++) {
@@ -154,146 +267,150 @@ class SpatialHash {
           if (!bucket) continue
           for (let k = 0; k < bucket.length; k++) {
             const i = bucket[k]!
-            if (distance(p, this.stars[i]!.positionPc) <= this.cellSize) found.push(i)
+            if (distance(p, this.stars[i]!.positionPc) <= radius) found.push(i)
           }
         }
       }
     }
     return found
   }
-}
 
-/** Binary min-heap keyed on cost. Small and sufficient; no dependency needed. */
-class MinHeap {
-  private readonly items: Array<{ index: number; cost: number }> = []
+  /** Shortest route between two stars, under this index's jump range. */
+  route(originId: string, destinationId: string, options: RouteOptions = {}): Route | null {
+    const { heuristicWeight = 1, jumpCost } = options
+    const jumpRange = options.maxJumpPc ?? this.maxJumpPc
 
-  get size(): number {
-    return this.items.length
-  }
-
-  push(index: number, cost: number): void {
-    this.items.push({ index, cost })
-    let i = this.items.length - 1
-    while (i > 0) {
-      const parent = (i - 1) >> 1
-      if (this.items[parent]!.cost <= this.items[i]!.cost) break
-      const tmp = this.items[parent]!
-      this.items[parent] = this.items[i]!
-      this.items[i] = tmp
-      i = parent
+    if (!(jumpRange > 0)) throw new Error('Maximum jump range must be positive.')
+    if (jumpRange > this.maxJumpPc) {
+      throw new Error(
+        `Query jump range ${jumpRange} pc exceeds the ${this.maxJumpPc} pc range this ` +
+          `index was built for. Neighbours beyond the cell size would be missed. ` +
+          `Rebuild the index at the longer range.`,
+      )
     }
-  }
+    if (!(heuristicWeight >= 1)) {
+      throw new Error(
+        `Heuristic weight must be at least 1; got ${heuristicWeight}. ` +
+          `A weight below 1 slows the search without buying anything, ` +
+          `since a weight of 1 already searches exactly.`,
+      )
+    }
+    // Infinity passes the check above, and then poisons the search: the
+    // heuristic at the destination is distance(goal, goal) === 0 exactly, so
+    // the priority becomes Infinity * 0 === NaN. Every comparison against NaN
+    // is false, so the heap's sift-up never terminates and the NaN entry
+    // bubbles to the root, popping the destination ahead of cheaper paths.
+    // Measured on a three-star graph, this returned a route 500x worse than
+    // optimal with no error raised.
+    if (!Number.isFinite(heuristicWeight)) {
+      throw new Error(
+        `Heuristic weight must be finite; got ${heuristicWeight}. An infinite ` +
+          `weight produces a NaN search priority at the destination and silently ` +
+          `returns a non-optimal route. For near-greedy behaviour use a large ` +
+          `finite weight, which keeps the suboptimality bound meaningful.`,
+      )
+    }
 
-  pop(): { index: number; cost: number } | undefined {
-    const top = this.items[0]
-    const last = this.items.pop()
-    if (this.items.length > 0 && last !== undefined) {
-      this.items[0] = last
-      let i = 0
-      for (;;) {
-        const l = 2 * i + 1
-        const r = l + 1
-        let smallest = i
-        if (l < this.items.length && this.items[l]!.cost < this.items[smallest]!.cost) {
-          smallest = l
-        }
-        if (r < this.items.length && this.items[r]!.cost < this.items[smallest]!.cost) {
-          smallest = r
-        }
-        if (smallest === i) break
-        const tmp = this.items[smallest]!
-        this.items[smallest] = this.items[i]!
-        this.items[i] = tmp
-        i = smallest
+    const originIndex = this.idToIndex.get(originId)
+    const destinationIndex = this.idToIndex.get(destinationId)
+    if (originIndex === undefined) throw new Error(`Origin star not found: ${originId}`)
+    if (destinationIndex === undefined) {
+      throw new Error(`Destination star not found: ${destinationId}`)
+    }
+
+    if (originIndex === destinationIndex) {
+      return {
+        hops: [this.stars[originIndex]!],
+        totalDistancePc: 0,
+        jumpCount: 0,
+        starsExplored: 1,
       }
     }
-    return top
-  }
-}
 
-/** Shortest total-distance route between two stars under a jump-range limit. */
-export function findRoute(search: RouteSearch): Route | null {
-  const { stars, originId, destinationId, maxJumpPc, heuristicWeight = 1, jumpCost } = search
+    if (this.running) {
+      throw new Error(
+        'StarIndex.route is already running on this index. Its search state is ' +
+          'shared between queries, so a jumpCost callback must not query the same ' +
+          'index reentrantly. Use a second StarIndex over the same stars instead.',
+      )
+    }
 
-  if (!(maxJumpPc > 0)) throw new Error('Maximum jump range must be positive.')
-  if (!(heuristicWeight >= 1)) {
-    throw new Error(
-      `Heuristic weight must be at least 1; got ${heuristicWeight}. ` +
-        `A weight below 1 slows the search without buying anything, ` +
-        `since a weight of 1 already searches exactly.`,
-    )
-  }
+    const { best, cameFrom, settled, queue } = this
+    best.fill(Infinity)
+    cameFrom.fill(-1)
+    settled.fill(0)
+    queue.clear()
 
-  const indexById = new Map<string, number>()
-  for (let i = 0; i < stars.length; i++) indexById.set(stars[i]!.id, i)
+    const goal = this.stars[destinationIndex]!.positionPc
+    best[originIndex] = 0
+    queue.push(originIndex, heuristicWeight * distance(this.stars[originIndex]!.positionPc, goal))
 
-  const originIndex = indexById.get(originId)
-  const destinationIndex = indexById.get(destinationId)
-  if (originIndex === undefined) throw new Error(`Origin star not found: ${originId}`)
-  if (destinationIndex === undefined) {
-    throw new Error(`Destination star not found: ${destinationId}`)
-  }
+    let starsExplored = 0
 
-  if (originIndex === destinationIndex) {
+    this.running = true
+    try {
+      while (queue.size > 0) {
+        const currentIndex = queue.pop()
+        if (currentIndex < 0) break
+        if (settled[currentIndex]) continue
+        settled[currentIndex] = 1
+        starsExplored++
+        if (currentIndex === destinationIndex) break
+
+        const fromStar = this.stars[currentIndex]!
+        const here = fromStar.positionPc
+        const costHere = best[currentIndex]!
+
+        const neighbours = this.within(here, jumpRange)
+        for (let n = 0; n < neighbours.length; n++) {
+          const neighbour = neighbours[n]!
+          if (settled[neighbour]) continue
+          const toStar = this.stars[neighbour]!
+          const step = distance(here, toStar.positionPc)
+          const edge = jumpCost ? jumpCost(fromStar, toStar, step) : step
+          const candidate = costHere + edge
+          if (candidate < best[neighbour]!) {
+            best[neighbour] = candidate
+            cameFrom[neighbour] = currentIndex
+            queue.push(neighbour, candidate + heuristicWeight * distance(toStar.positionPc, goal))
+          }
+        }
+      }
+    } finally {
+      // Must clear even if a user jumpCost throws, or the index is wedged.
+      this.running = false
+    }
+
+    if (!Number.isFinite(best[destinationIndex]!)) return null
+
+    const hops: StarNode[] = []
+    for (let i: number = destinationIndex; i !== -1; i = cameFrom[i]!) {
+      hops.push(this.stars[i]!)
+    }
+    hops.reverse()
+
     return {
-      hops: [stars[originIndex]!],
-      totalDistancePc: 0,
-      jumpCount: 0,
-      starsExplored: 1,
+      hops,
+      totalDistancePc: best[destinationIndex]!,
+      jumpCount: hops.length - 1,
+      starsExplored,
     }
   }
+}
 
-  const goal = stars[destinationIndex]!.positionPc
-  const hash = new SpatialHash(stars, maxJumpPc)
-  const best = new Float64Array(stars.length).fill(Infinity)
-  const cameFrom = new Int32Array(stars.length).fill(-1)
-  const settled = new Uint8Array(stars.length)
-
-  best[originIndex] = 0
-  const queue = new MinHeap()
-  queue.push(originIndex, heuristicWeight * distance(stars[originIndex]!.positionPc, goal))
-
-  let starsExplored = 0
-
-  while (queue.size > 0) {
-    const current = queue.pop()!
-    if (settled[current.index]) continue
-    settled[current.index] = 1
-    starsExplored++
-    if (current.index === destinationIndex) break
-
-    const fromStar = stars[current.index]!
-    const here = fromStar.positionPc
-    const costHere = best[current.index]!
-
-    const neighbours = hash.within(here)
-    for (let n = 0; n < neighbours.length; n++) {
-      const neighbour = neighbours[n]!
-      if (settled[neighbour]) continue
-      const toStar = stars[neighbour]!
-      const step = distance(here, toStar.positionPc)
-      const edge = jumpCost ? jumpCost(fromStar, toStar, step) : step
-      const candidate = costHere + edge
-      if (candidate < best[neighbour]!) {
-        best[neighbour] = candidate
-        cameFrom[neighbour] = current.index
-        queue.push(neighbour, candidate + heuristicWeight * distance(toStar.positionPc, goal))
-      }
-    }
-  }
-
-  if (!Number.isFinite(best[destinationIndex]!)) return null
-
-  const hops: StarNode[] = []
-  for (let i: number = destinationIndex; i !== -1; i = cameFrom[i]!) {
-    hops.push(stars[i]!)
-  }
-  hops.reverse()
-
-  return {
-    hops,
-    totalDistancePc: best[destinationIndex]!,
-    jumpCount: hops.length - 1,
-    starsExplored,
-  }
+/**
+ * Shortest route between two stars, building a throwaway index.
+ *
+ * Convenient for one-shot queries and for small star sets. For anything at
+ * catalog scale, or for more than one query over the same stars, build a
+ * {@link StarIndex} once and call its `route` method instead: the index build
+ * is essentially the whole cost of a query.
+ */
+export function findRoute(search: RouteSearch): Route | null {
+  const { stars, originId, destinationId, maxJumpPc, heuristicWeight, jumpCost } = search
+  const index = new StarIndex(stars, maxJumpPc)
+  const options: RouteOptions = {}
+  if (heuristicWeight !== undefined) options.heuristicWeight = heuristicWeight
+  if (jumpCost !== undefined) options.jumpCost = jumpCost
+  return index.route(originId, destinationId, options)
 }
