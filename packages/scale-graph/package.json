@@ -1,0 +1,11 @@
+{
+  "name": "@stellarai/scale-graph",
+  "version": "0.0.0",
+  "type": "module",
+  "description": "Camera-relative coordinate rebasing across the ~10^22 span from solar system to extragalactic distances.",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": { ".": { "types": "./dist/index.d.ts", "default": "./dist/index.js" } },
+  "files": ["dist"],
+  "scripts": { "build": "tsc -b" }
+}

@@ -1,8 +1,17 @@
 {
   "files": [],
   "references": [
-    { "path": "packages/astro-core" },
-    { "path": "packages/scene-api" },
-    { "path": "packages/catalog" }
+    {
+      "path": "packages/astro-core"
+    },
+    {
+      "path": "packages/scene-api"
+    },
+    {
+      "path": "packages/catalog"
+    },
+    {
+      "path": "packages/scale-graph"
+    }
   ]
 }
