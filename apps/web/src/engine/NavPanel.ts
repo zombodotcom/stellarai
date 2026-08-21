@@ -27,6 +27,7 @@ export interface NavPanelHost {
   frameDistanceAu(d: number): void
   plotRoute(hops: readonly LoadedStar[]): void
   clearRoute(): void
+  onStarPicked: ((star: LoadedStar) => void) | null
 }
 
 const SOL_ID = 'sol'
@@ -66,6 +67,17 @@ export class NavPanel {
     container.appendChild(this.root)
     this.bind()
     void this.loadNames()
+
+    // Clicking a star in the sky selects it as the destination.
+    host.onStarPicked = (star) => {
+      const named = this.names.find((n) => n.id === star.id)
+      this.q<HTMLInputElement>('#nav-dest').value = named ? named.name : String(star.id)
+      const distancePc = Math.hypot(star.xPc, star.yPc, star.zPc)
+      this.say(
+        `${named ? named.name : `star ${star.id}`} — mag ${star.mag.toFixed(1)}, ` +
+          `${distancePc.toFixed(2)} pc (${(distancePc * 3.2616).toFixed(1)} ly) from Sol`,
+      )
+    }
   }
 
   private q<T extends Element>(sel: string): T {

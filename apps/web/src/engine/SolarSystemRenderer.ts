@@ -23,6 +23,7 @@ import {
 } from '@stellarai/scale-graph'
 import { heliocentricState, type PlanetId } from '@stellarai/astro-core'
 import { StarField, type LoadedStar, type StarFieldStatus } from './StarField.js'
+import { LabelLayer, type LabelStar } from './LabelLayer.js'
 
 /** Astronomical units per parsec. */
 const AU_PER_PC = 206_264.8
@@ -118,8 +119,13 @@ export class SolarSystemRenderer {
   private theta = 0.6
   private phi = 1.1
   private disposed = false
+  private lastSsbOffset = { x: 0, y: 0, z: 0 }
+  private lastCameraAu = { x: 0, y: 0, z: 0 }
   readonly starField = new StarField()
   private routeLine: THREE.Line | null = null
+  private labels: LabelLayer | null = null
+  /** Fired when the user clicks a star. */
+  onStarPicked: ((star: LoadedStar) => void) | null = null
 
   constructor(options: RendererOptions) {
     this.epoch = options.epoch ?? new Date()
@@ -144,6 +150,41 @@ export class SolarSystemRenderer {
     // rebasing covers them.
     this.starField.onProgress = (s) => this.onStarProgress?.(s)
     void this.starField.load(this.frameGroups.get('ssb')!)
+
+    this.labels = new LabelLayer(document.body)
+    void this.loadLabelStars()
+  }
+
+  /** Join names.json with loaded catalog positions once both are available. */
+  private async loadLabelStars(): Promise<void> {
+    try {
+      const response = await fetch('/catalog/names.json')
+      const names = (await response.json()) as Array<{ id: number; name: string; mag: number }>
+      const resolve = () => {
+        const stars: LabelStar[] = []
+        for (const n of names) {
+          const star = this.starField.byId(n.id)
+          if (!star) continue
+          stars.push({
+            name: n.name,
+            x: star.xPc * AU_PER_PC,
+            y: star.yPc * AU_PER_PC,
+            z: star.zPc * AU_PER_PC,
+            mag: n.mag,
+            distancePcFromSol: Math.hypot(star.xPc, star.yPc, star.zPc),
+          })
+        }
+        if (this.labels) this.labels.stars = stars
+      }
+      // Chunks stream in; refresh the join as they land.
+      resolve()
+      this.starField.onProgress = (s) => {
+        this.onStarProgress?.(s)
+        resolve()
+      }
+    } catch {
+      // Labels are a nicety; the sky works without them.
+    }
   }
 
   /** Reports catalog streaming progress, for a HUD to display. */
@@ -247,6 +288,12 @@ export class SolarSystemRenderer {
     )
     const ssb = this.frameGroups.get('ssb')!
     ssb.position.set(ssbOffset.x, ssbOffset.y, ssbOffset.z)
+    this.lastSsbOffset = ssbOffset
+    this.lastCameraAu = {
+      x: this.focusCurrent.x + off.x,
+      y: this.focusCurrent.y + off.y,
+      z: this.focusCurrent.z + off.z,
+    }
 
     // Planet markers track the live ephemeris (frame-local AU coordinates).
     for (const planet of PLANETS) {
@@ -282,6 +329,8 @@ export class SolarSystemRenderer {
 
       this.resizeIfNeeded()
       this.syncFromGraph(Math.min(dt, 0.1))
+      this.camera3.updateMatrixWorld()
+      this.labels?.update(this.camera3, this.lastSsbOffset, this.lastCameraAu)
       this.renderer.render(this.scene, this.camera3)
       requestAnimationFrame(tick)
     }
@@ -346,15 +395,25 @@ export class SolarSystemRenderer {
     let lastX = 0
     let lastY = 0
 
+    let downX = 0
+    let downY = 0
+    let downAt = 0
     canvas.addEventListener('pointerdown', (e) => {
       dragging = true
       lastX = e.clientX
       lastY = e.clientY
+      downX = e.clientX
+      downY = e.clientY
+      downAt = performance.now()
       canvas.setPointerCapture(e.pointerId)
     })
     canvas.addEventListener('pointerup', (e) => {
       dragging = false
       canvas.releasePointerCapture(e.pointerId)
+      const moved = Math.hypot(e.clientX - downX, e.clientY - downY)
+      if (moved < 5 && performance.now() - downAt < 400) {
+        this.pickStarAt(e.clientX, e.clientY)
+      }
     })
     canvas.addEventListener('pointermove', (e) => {
       if (!dragging) return
@@ -375,6 +434,49 @@ export class SolarSystemRenderer {
       },
       { passive: false },
     )
+  }
+
+  /**
+   * Screen-space picking over every loaded star. Ray-casting against point
+   * clouds needs a world-space threshold that varies wildly with distance;
+   * projecting to pixels and taking the nearest within a small radius is
+   * simpler and matches what the user sees. ~870k projections cost tens of
+   * milliseconds — fine for a click.
+   */
+  private pickStarAt(clientX: number, clientY: number): void {
+    if (!this.onStarPicked || this.starField.stars.length === 0) return
+
+    const canvas = this.renderer.domElement
+    const width = canvas.clientWidth
+    const height = canvas.clientHeight
+    const view = this.camera3.matrixWorldInverse.elements
+    const proj = this.camera3.projectionMatrix.elements
+    const offset = this.lastSsbOffset
+
+    let best: LoadedStar | null = null
+    let bestDistancePx = 14 // pick radius
+
+    for (const star of this.starField.stars) {
+      const rx = star.xPc * AU_PER_PC + offset.x
+      const ry = star.yPc * AU_PER_PC + offset.y
+      const rz = star.zPc * AU_PER_PC + offset.z
+      const cx = view[0]! * rx + view[4]! * ry + view[8]! * rz + view[12]!
+      const cy = view[1]! * rx + view[5]! * ry + view[9]! * rz + view[13]!
+      const cz = view[2]! * rx + view[6]! * ry + view[10]! * rz + view[14]!
+      if (cz > 0) continue
+
+      const clipW = -cz
+      const sx = ((proj[0]! * cx + proj[8]! * cz) / clipW + 1) * 0.5 * width
+      const sy = (1 - ((proj[5]! * cy + proj[9]! * cz) / clipW + 1) * 0.5) * height
+
+      const d = Math.hypot(sx - clientX, sy - clientY)
+      if (d < bestDistancePx) {
+        bestDistancePx = d
+        best = star
+      }
+    }
+
+    if (best) this.onStarPicked(best)
   }
 
   private resizeIfNeeded(): void {
