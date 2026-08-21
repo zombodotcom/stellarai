@@ -162,6 +162,23 @@
       #nav-panel label {
         min-width: 5.6rem;
       }
+      #btn-back {
+        background: #16233f;
+        color: #9fb4d8;
+        border: 1px solid #2b3a5c;
+        border-radius: 0.3rem;
+        padding: 0.2rem 0.55rem;
+        font-size: 0.78rem;
+        cursor: pointer;
+        margin-right: 0.5rem;
+      }
+      #btn-back:disabled {
+        opacity: 0.35;
+        cursor: default;
+      }
+      #nav-panel input[type='checkbox'] {
+        accent-color: #5fd77a;
+      }
       #nav-panel select[data-k='browse'] {
         flex: 1;
         background: #0b1224;
@@ -328,6 +345,7 @@
   <body>
     <canvas id="scene"></canvas>
     <div id="hud">
+      <button id="btn-back" title="return to previous stop">&#9664; back</button>
       <h1>StellarAI</h1>
       <div class="row">
         <span id="epoch"></span>
@@ -381,6 +399,15 @@
             : `${s.starsLoaded.toLocaleString()} stars (${s.chunksLoaded}/${s.chunksTotal})`
       }
       engine.start()
+
+      const backBtn = document.querySelector('#btn-back')
+      backBtn.addEventListener('click', () => {
+        engine.goBack()
+        backBtn.disabled = engine.historyDepth === 0
+      })
+      setInterval(() => {
+        backBtn.disabled = engine.historyDepth === 0
+      }, 1000)
       new EntryPanel(document.body)
       new NavPanel(document.body, engine)
       new TransferPanel(document.body, engine)

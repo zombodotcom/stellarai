@@ -16,3 +16,8 @@ export * from "./routing.js"
 export * from './kepler.js'
 export * from './flyby.js'
 export * from './mga.js'
+export { aberrateAngleRad, dopplerFactor } from './relativity-view.js'
+export { solveIntercept } from './intercept.js'
+export type { InterceptParams, InterceptSolution } from './intercept.js'
+export { habitableZoneAu } from './habitable.js'
+export type { HabitableZone } from './habitable.js'

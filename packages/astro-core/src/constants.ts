@@ -17,3 +17,6 @@ export const PC_PER_LY = 0.3066013937752
 
 /** Light years per parsec. */
 export const LY_PER_PC = 3.2615637769
+
+/** One km/s expressed in parsecs per Julian year (~1.0227e-6). */
+export const KM_S_IN_PC_PER_YR = JULIAN_YEAR_S / ((LIGHT_YEAR_M / 1000) * LY_PER_PC)

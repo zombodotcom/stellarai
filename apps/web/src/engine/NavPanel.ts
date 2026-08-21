@@ -34,6 +34,7 @@ export interface NavPanelHost {
   plotRoute(hops: readonly LoadedStar[]): void
   clearRoute(): void
   onStarPicked: ((star: LoadedStar) => void) | null
+  instantTravel: boolean
 }
 
 const SOL_ID = 'sol'
@@ -65,6 +66,10 @@ export class NavPanel {
         <select id="nav-browse" data-k="browse">
           <option value="" selected>pick a destination…</option>
         </select>
+      </div>
+      <div class="row">
+        <label for="nav-instant">instant travel</label>
+        <input type="checkbox" id="nav-instant" data-k="instant" />
       </div>
       <div class="row">
         <label>jump range</label>
@@ -112,6 +117,10 @@ export class NavPanel {
       this.lastPickAt = now
       this.updateCruise()
     }
+
+    this.q<HTMLInputElement>('[data-k="instant"]').addEventListener('change', (e) => {
+      this.host.instantTravel = (e.target as HTMLInputElement).checked
+    })
   }
 
   private q<T extends Element>(sel: string): T {
@@ -250,6 +259,23 @@ export class NavPanel {
       )
     }
     select.appendChild(brightest)
+
+    // Hand-picked stops a traveler should not miss.
+    const SCENIC = [
+      'Sirius', 'Vega', 'Betelgeuse', 'Antares', 'Rigel', 'Aldebaran',
+      'Deneb', 'Polaris', 'Altair', 'Fomalhaut', 'Canopus', 'Arcturus',
+      'Alcyone', 'Mizar', 'Algol', 'Achernar',
+    ]
+    const scenic = document.createElement('optgroup')
+    scenic.label = 'scenic waypoints'
+    for (const name of SCENIC) {
+      const n = withDistance.find((w) => w.name === name)
+      if (!n) continue
+      scenic.appendChild(
+        new Option(`${n.name} — ${(n.distancePc * 3.2616).toFixed(0)} ly`, `star:${n.name}`),
+      )
+    }
+    select.appendChild(scenic)
 
     if (select.dataset['wired'] === '1') return
     select.dataset['wired'] = '1'

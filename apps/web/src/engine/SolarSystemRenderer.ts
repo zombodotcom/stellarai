@@ -23,6 +23,7 @@ import {
 } from '@stellarai/scale-graph'
 import { heliocentricState, type PlanetId } from '@stellarai/astro-core'
 import { StarField, type LoadedStar, type StarFieldStatus } from './StarField.js'
+import { addGalaxyBackdrop } from './GalaxyBackdrop.js'
 import { LabelLayer, type LabelStar } from './LabelLayer.js'
 
 /** Astronomical units per parsec. */
@@ -124,6 +125,16 @@ export class SolarSystemRenderer {
   readonly starField = new StarField()
   private routeLine: THREE.Line | null = null
   private transferLine: THREE.Line | null = null
+  private journeyLine: THREE.Line | null = null
+  /** Positions visited by travel, barycentric AU — the journey trail. */
+  private readonly journeyPoints: THREE.Vector3[] = []
+  /** Focus states to return to; goBack() pops. */
+  private readonly history: Array<{
+    focus: { kind: 'frame'; id: string } | { kind: 'point'; x: number; y: number; z: number }
+    distanceAu: number
+  }> = []
+  /** When true, focus and zoom snap instead of easing. */
+  instantTravel = false
   private labels: LabelLayer | null = null
   /** Fired when the user clicks a star. */
   onStarPicked: ((star: LoadedStar) => void) | null = null
@@ -137,10 +148,10 @@ export class SolarSystemRenderer {
       antialias: true,
       logarithmicDepthBuffer: true,
     })
-    // Far plane reaches 1e10 AU (~48 kpc): the logarithmic depth buffer
-    // keeps precision across it, so the solar system and the star field
-    // share one pass. Dedicated per-tier passes come with the galactic tier.
-    this.camera3 = new THREE.PerspectiveCamera(50, 1, 1e-4, 1e10)
+    // Far plane reaches 1e13 AU (~48 Mpc): the logarithmic depth buffer
+    // keeps precision across it, so the solar system, the star field and
+    // the deep-space backdrop all share one pass.
+    this.camera3 = new THREE.PerspectiveCamera(50, 1, 1e-4, 1e13)
     this.scene.background = new THREE.Color(0x02030a)
 
     this.buildScene()
@@ -199,6 +210,9 @@ export class SolarSystemRenderer {
     const ssb = new THREE.Group()
     this.frameGroups.set('ssb', ssb)
     this.scene.add(ssb)
+
+    // The galaxy (and its companions) beyond the catalog's local bubble.
+    addGalaxyBackdrop(ssb)
 
     // Sun: a small emissive sphere plus a point light.
     const sun = new THREE.Mesh(
@@ -260,7 +274,7 @@ export class SolarSystemRenderer {
     // travel between stars is a flight rather than a cut. Distance eases in
     // log space, because travel spans many decades of scale.
     const target = this.resolveFocusTarget()
-    const k = 1 - Math.exp(-3 * dt)
+    const k = this.instantTravel ? 1 : 1 - Math.exp(-3 * dt)
     this.focusCurrent.x += (target.x - this.focusCurrent.x) * k
     this.focusCurrent.y += (target.y - this.focusCurrent.y) * k
     this.focusCurrent.z += (target.z - this.focusCurrent.z) * k
@@ -342,25 +356,78 @@ export class SolarSystemRenderer {
     return new Date(this.epoch)
   }
 
+  /** Remember where we are so goBack() can return here. */
+  private pushHistory(): void {
+    const focus =
+      this.focusTarget.kind === 'frame'
+        ? { kind: 'frame' as const, id: this.focusTarget.id }
+        : { kind: 'point' as const, x: this.focusTarget.x, y: this.focusTarget.y, z: this.focusTarget.z }
+    this.history.push({ focus, distanceAu: this.distanceTargetAu })
+    if (this.history.length > 50) this.history.shift()
+  }
+
+  /** Return to the previous stop. False when there is nowhere to go back to. */
+  goBack(): boolean {
+    const prev = this.history.pop()
+    if (!prev) return false
+    this.focusTarget = prev.focus
+    this.distanceTargetAu = prev.distanceAu
+    if (this.journeyPoints.length > 0) {
+      this.journeyPoints.pop()
+      this.redrawJourney()
+    }
+    return true
+  }
+
+  /** How many stops goBack() can unwind. */
+  get historyDepth(): number {
+    return this.history.length
+  }
+
+  private redrawJourney(): void {
+    if (this.journeyLine) {
+      this.journeyLine.parent?.remove(this.journeyLine)
+      this.journeyLine.geometry.dispose()
+      this.journeyLine = null
+    }
+    if (this.journeyPoints.length < 2) return
+    this.journeyLine = new THREE.Line(
+      new THREE.BufferGeometry().setFromPoints(this.journeyPoints),
+      new THREE.LineBasicMaterial({ color: 0x6fd3e8, transparent: true, opacity: 0.45 }),
+    )
+    this.frameGroups.get('ssb')!.add(this.journeyLine)
+  }
+
   setFocus(body: string): void {
+    this.pushHistory()
     this.focusTarget = { kind: 'frame', id: body }
     this.distanceTargetAu = Math.min(this.distanceTargetAu, 200)
   }
 
   /** Fly to a catalog star and settle 40 AU away from it. */
   travelToStar(star: LoadedStar): void {
+    this.pushHistory()
+    // The trail starts from wherever this leg departs.
+    if (this.journeyPoints.length === 0) {
+      const from = this.resolveFocusTarget()
+      this.journeyPoints.push(new THREE.Vector3(from.x, from.y, from.z))
+    }
     this.focusTarget = {
       kind: 'point',
       x: star.xPc * AU_PER_PC,
       y: star.yPc * AU_PER_PC,
       z: star.zPc * AU_PER_PC,
     }
+    this.journeyPoints.push(
+      new THREE.Vector3(this.focusTarget.x, this.focusTarget.y, this.focusTarget.z),
+    )
+    this.redrawJourney()
     this.distanceTargetAu = 40
   }
 
   /** Overview framing: pull back far enough to see a whole route. */
   frameDistanceAu(distanceAu: number): void {
-    this.distanceTargetAu = Math.min(2e7, Math.max(0.05, distanceAu))
+    this.distanceTargetAu = Math.min(3e11, Math.max(0.05, distanceAu))
   }
 
   /** Draw a route as a polyline through its hop stars. Replaces any prior route. */
@@ -452,9 +519,9 @@ export class SolarSystemRenderer {
       'wheel',
       (e) => {
         e.preventDefault()
-        // Zoom out far enough to leave the solar system: 2e7 AU is ~97 pc.
+        // Deep space is open: 3e11 AU (~1.5 Mpc) reaches past Andromeda.
         this.distanceTargetAu = Math.min(
-          2e7,
+          3e11,
           Math.max(0.05, this.distanceTargetAu * (e.deltaY > 0 ? 1.15 : 1 / 1.15)),
         )
       },
