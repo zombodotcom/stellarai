@@ -123,6 +123,7 @@ export class SolarSystemRenderer {
   private lastCameraAu = { x: 0, y: 0, z: 0 }
   readonly starField = new StarField()
   private routeLine: THREE.Line | null = null
+  private transferLine: THREE.Line | null = null
   private labels: LabelLayer | null = null
   /** Fired when the user clicks a star. */
   onStarPicked: ((star: LoadedStar) => void) | null = null
@@ -381,6 +382,31 @@ export class SolarSystemRenderer {
       this.routeLine.geometry.dispose()
       this.routeLine = null
     }
+  }
+
+  /** Draw an interplanetary transfer arc, in barycentric AU. */
+  plotTransfer(pointsAu: Array<{ x: number; y: number; z: number }>): void {
+    this.clearTransfer()
+    const points = pointsAu.map((p) => new THREE.Vector3(p.x, p.y, p.z))
+    this.transferLine = new THREE.Line(
+      new THREE.BufferGeometry().setFromPoints(points),
+      new THREE.LineBasicMaterial({ color: 0xe8b45a, transparent: true, opacity: 0.95 }),
+    )
+    this.frameGroups.get('ssb')!.add(this.transferLine)
+  }
+
+  clearTransfer(): void {
+    if (this.transferLine) {
+      this.transferLine.parent?.remove(this.transferLine)
+      this.transferLine.geometry.dispose()
+      this.transferLine = null
+    }
+  }
+
+  /** Jump the simulation clock, e.g. to a chosen departure date. */
+  setEpoch(epoch: Date): void {
+    this.epoch = new Date(epoch)
+    updateSolarSystemFrames(this.graph, this.epoch)
   }
 
   dispose(): void {

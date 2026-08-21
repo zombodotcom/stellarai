@@ -13,3 +13,4 @@ export * from './ephemeris.js'
 export * from './lambert.js'
 export * from './windows.js'
 export * from "./routing.js"
+export * from './kepler.js'

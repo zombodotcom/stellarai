@@ -183,6 +183,62 @@
       #nav-panel .buttons {
         justify-content: flex-start;
       }
+      #transfer-panel {
+        position: fixed;
+        bottom: 0.75rem;
+        right: 0.75rem;
+        width: 322px;
+        background: rgba(4, 8, 20, 0.72);
+        border: 1px solid #24304a;
+        border-radius: 0.5rem;
+        padding: 0.75rem 1rem;
+        font-size: 0.8rem;
+        backdrop-filter: blur(4px);
+      }
+      #transfer-panel h2 {
+        margin: 0 0 0.5rem;
+        font-size: 0.85rem;
+        letter-spacing: 0.06em;
+        font-weight: 600;
+        color: #8fa3c8;
+      }
+      #transfer-panel .row {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        margin: 0.3rem 0;
+      }
+      #transfer-panel input[type='number'] {
+        width: 4.6rem;
+        background: #0b1224;
+        color: #cdd6e8;
+        border: 1px solid #2b3a5c;
+        border-radius: 0.3rem;
+        padding: 0.2rem 0.4rem;
+      }
+      #transfer-panel .windows {
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+        margin-top: 0.4rem;
+      }
+      #transfer-panel .window-row {
+        text-align: left;
+        font-family: ui-monospace, monospace;
+        font-size: 0.72rem;
+        white-space: pre;
+        padding: 0.22rem 0.45rem;
+      }
+      #transfer-panel .window-row.selected {
+        border-color: #e8b45a;
+        color: #fff;
+      }
+      #transfer-panel .note {
+        margin-top: 0.4rem;
+        color: #64769a;
+        font-size: 0.7rem;
+        min-height: 0.9rem;
+      }
       .star-label {
         position: fixed;
         top: 0;
@@ -240,6 +296,7 @@
       import { SolarSystemRenderer } from '../engine/SolarSystemRenderer'
       import { EntryPanel } from '../engine/EntryPanel'
       import { NavPanel } from '../engine/NavPanel'
+      import { TransferPanel } from '../engine/TransferPanel'
 
       const canvas = document.getElementById('scene') as HTMLCanvasElement
       const engine = new SolarSystemRenderer({ canvas })
@@ -253,6 +310,7 @@
       engine.start()
       new EntryPanel(document.body)
       new NavPanel(document.body, engine)
+      new TransferPanel(document.body, engine)
 
       const epochLabel = document.getElementById('epoch')!
       setInterval(() => {
