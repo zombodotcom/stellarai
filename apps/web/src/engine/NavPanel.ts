@@ -11,7 +11,13 @@
  * excludes but a route from home needs.
  */
 
-import { StarIndex, type StarNode } from '@stellarai/astro-core'
+import {
+  StarIndex,
+  brachistochroneCruise,
+  log10MassRatioForDeltaV,
+  LY_PER_PC,
+  type StarNode,
+} from '@stellarai/astro-core'
 import type { LoadedStar, StarField } from './StarField.js'
 
 interface NamedStar {
@@ -62,11 +68,17 @@ export class NavPanel {
         <button data-k="route">plot route from Sol</button>
         <button data-k="home">home</button>
       </div>
+      <div class="row">
+        <label>ship accel</label>
+        <input type="range" data-k="accel" min="-2" max="0.5" step="0.05" value="0" />
+        <span data-v="accel">1.0 g</span>
+      </div>
+      <div class="cruise" data-v="cruise"></div>
       <div class="result" data-v="result"></div>
     `
     container.appendChild(this.root)
     this.bind()
-    void this.loadNames()
+    void this.loadNames().then(() => this.applyUrlState())
 
     // Clicking a star in the sky selects it as the destination.
     host.onStarPicked = (star) => {
@@ -77,11 +89,74 @@ export class NavPanel {
         `${named ? named.name : `star ${star.id}`} — mag ${star.mag.toFixed(1)}, ` +
           `${distancePc.toFixed(2)} pc (${(distancePc * 3.2616).toFixed(1)} ly) from Sol`,
       )
+      this.updateCruise()
     }
   }
 
   private q<T extends Element>(sel: string): T {
     return this.root.querySelector<T>(sel)!
+  }
+
+  /**
+   * Permalinks: ?to=Vega&jump=6&accel=1&route=1 restores a destination and
+   * re-runs the route or travel on load, so every plotted route is a
+   * shareable artifact rather than a dead screenshot. State is written with
+   * replaceState — no history spam — whenever the user routes or travels.
+   */
+  private writeUrlState(action: 'route' | 'travel'): void {
+    const params = new URLSearchParams()
+    const dest = this.q<HTMLInputElement>('#nav-dest').value.trim()
+    if (!dest) return
+    params.set('to', dest)
+    params.set('jump', String(this.jumpRangePc()))
+    params.set('accel', this.accelerationG().toPrecision(2))
+    params.set(action, '1')
+    history.replaceState(null, '', `?${params.toString()}`)
+  }
+
+  private applyUrlState(): void {
+    const params = new URLSearchParams(location.search)
+    const to = params.get('to')
+    if (!to) return
+
+    this.q<HTMLInputElement>('#nav-dest').value = to
+    const jump = Number(params.get('jump'))
+    if (Number.isFinite(jump) && jump >= 1 && jump <= 20) {
+      const slider = this.q<HTMLInputElement>('[data-k="jump"]')
+      slider.value = String(jump)
+      this.q<HTMLElement>('[data-v="jump"]').textContent = `${jump.toFixed(1)} pc`
+    }
+    const accel = Number(params.get('accel'))
+    if (Number.isFinite(accel) && accel > 0) {
+      const slider = this.q<HTMLInputElement>('[data-k="accel"]')
+      slider.value = String(Math.log10(accel))
+      this.q<HTMLElement>('[data-v="accel"]').textContent =
+        accel >= 0.1 ? `${accel.toFixed(1)} g` : `${accel.toFixed(2)} g`
+    }
+
+    // The destination star may sit in a chunk that has not streamed yet;
+    // retry until it resolves or loading is clearly done.
+    const wantRoute = params.get('route') === '1'
+    const wantTravel = params.get('travel') === '1'
+    let attempts = 0
+    const tryApply = () => {
+      attempts++
+      const star = this.findDestination()
+      const field = this.host.starField
+      const fullyLoaded = field.stars.length > 0 && field.loadingDone
+      // Travel only needs the target star; a route needs the whole catalog,
+      // or it plans through a partially streamed sky and returns a valid but
+      // worse route than a reload would give. Permalinks must be stable.
+      if (star && (wantTravel || fullyLoaded)) {
+        this.updateCruise()
+        if (wantRoute) this.q<HTMLButtonElement>('[data-k="route"]').click()
+        else if (wantTravel) this.q<HTMLButtonElement>('[data-k="travel"]').click()
+        return
+      }
+      if (star) this.updateCruise()
+      if (attempts < 80) setTimeout(tryApply, 500)
+    }
+    tryApply()
   }
 
   private say(text: string): void {
@@ -105,6 +180,55 @@ export class NavPanel {
 
   private jumpRangePc(): number {
     return Number(this.q<HTMLInputElement>('[data-k="jump"]').value)
+  }
+
+  /** Ship proper acceleration in g, from the log-scale slider. */
+  private accelerationG(): number {
+    return 10 ** Number(this.q<HTMLInputElement>('[data-k="accel"]').value)
+  }
+
+  /**
+   * The relativistic answer to "how long to get there": flip-and-burn at
+   * constant proper acceleration, both clocks reported, plus the propellant
+   * verdict. All from the tested brachistochrone solver; the panel wording
+   * is deliberately concrete about whose clock is whose.
+   */
+  private updateCruise(): void {
+    const el = this.q<HTMLElement>('[data-v="cruise"]')
+    const star = this.findDestination()
+    if (!star) {
+      el.textContent = ''
+      return
+    }
+    const distancePc = Math.hypot(star.xPc, star.yPc, star.zPc)
+    if (!(distancePc > 0)) {
+      el.textContent = ''
+      return
+    }
+
+    const g = this.accelerationG()
+    const cruise = brachistochroneCruise({
+      distanceLy: distancePc * LY_PER_PC,
+      properAccelerationG: g,
+    })
+
+    const fmtYears = (years: number): string => {
+      if (years < 1) return `${(years * 365.25).toFixed(0)} days`
+      if (years < 100) return `${years.toFixed(1)} yr`
+      return `${Math.round(years).toLocaleString()} yr`
+    }
+
+    // Propellant on a very good fusion drive (10,000 km/s exhaust).
+    const log10Ratio = log10MassRatioForDeltaV(cruise.deltaVMs, 1e7)
+    const fuel =
+      log10Ratio > 6
+        ? `fuel: 10^${Math.round(log10Ratio).toLocaleString()}x ship mass (fusion) — not happening`
+        : `fuel: ${(10 ** log10Ratio).toFixed(1)}x ship mass (fusion)`
+
+    el.textContent =
+      `flip-and-burn: ship clock ${fmtYears(cruise.properTimeYears)}, ` +
+      `Earth clock ${fmtYears(cruise.coordinateTimeYears)}, ` +
+      `peak ${Math.min(99.99, cruise.peakVelocityFractionC * 100).toFixed(2)}% c · ${fuel}`
   }
 
   private findDestination(): LoadedStar | null {
@@ -141,6 +265,16 @@ export class NavPanel {
       this.q<HTMLElement>('[data-v="jump"]').textContent = `${Number(jump.value).toFixed(1)} pc`
     })
 
+    const accel = this.q<HTMLInputElement>('[data-k="accel"]')
+    accel.addEventListener('input', () => {
+      const g = this.accelerationG()
+      this.q<HTMLElement>('[data-v="accel"]').textContent =
+        g >= 0.1 ? `${g.toFixed(1)} g` : `${g.toFixed(2)} g`
+      this.updateCruise()
+    })
+
+    this.q<HTMLInputElement>('#nav-dest').addEventListener('change', () => this.updateCruise())
+
     this.q<HTMLButtonElement>('[data-k="home"]').addEventListener('click', () => {
       this.host.clearRoute()
       this.host.setFocus('sun')
@@ -155,8 +289,10 @@ export class NavPanel {
         return
       }
       this.host.travelToStar(star)
+      this.writeUrlState('travel')
       const distancePc = Math.hypot(star.xPc, star.yPc, star.zPc)
       this.say(`en route: ${(distancePc * 3.2616).toFixed(1)} ly from Sol`)
+      this.updateCruise()
     })
 
     this.q<HTMLButtonElement>('[data-k="route"]').addEventListener('click', () => {
@@ -166,6 +302,7 @@ export class NavPanel {
         return
       }
       const jumpPc = this.jumpRangePc()
+      this.writeUrlState('route')
       this.say('computing route...')
       // Yield a frame so the message paints before the index build.
       requestAnimationFrame(() => {

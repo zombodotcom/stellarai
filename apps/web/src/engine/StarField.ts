@@ -111,6 +111,9 @@ export class StarField {
   readonly stars: LoadedStar[] = []
   private readonly starById = new Map<number, LoadedStar>()
 
+  /** True once every chunk has been fetched (or failed and been skipped). */
+  loadingDone = false
+
   byId(id: number): LoadedStar | undefined {
     return this.starById.get(id)
   }
@@ -146,6 +149,7 @@ export class StarField {
         console.warn(`Catalog chunk ${chunk.file} failed to load:`, error)
       }
     }
+    this.loadingDone = true
   }
 
   private buildPoints(stars: ReturnType<typeof decodeChunk>): THREE.Points {
