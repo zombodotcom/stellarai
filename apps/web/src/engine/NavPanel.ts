@@ -43,6 +43,8 @@ export class NavPanel {
   private names: NamedStar[] = []
   private index: StarIndex | null = null
   private indexJumpPc = 0
+  private lastPickId: number | null = null
+  private lastPickAt = 0
 
   constructor(
     container: HTMLElement,
@@ -57,6 +59,12 @@ export class NavPanel {
         <label for="nav-dest">destination</label>
         <input id="nav-dest" list="nav-names" placeholder="Proxima Centauri" autocomplete="off" />
         <datalist id="nav-names"></datalist>
+      </div>
+      <div class="row">
+        <label for="nav-browse">browse</label>
+        <select id="nav-browse" data-k="browse">
+          <option value="" selected>pick a destination…</option>
+        </select>
       </div>
       <div class="row">
         <label>jump range</label>
@@ -85,10 +93,23 @@ export class NavPanel {
       const named = this.names.find((n) => n.id === star.id)
       this.q<HTMLInputElement>('#nav-dest').value = named ? named.name : String(star.id)
       const distancePc = Math.hypot(star.xPc, star.yPc, star.zPc)
-      this.say(
-        `${named ? named.name : `star ${star.id}`} — mag ${star.mag.toFixed(1)}, ` +
-          `${distancePc.toFixed(2)} pc (${(distancePc * 3.2616).toFixed(1)} ly) from Sol`,
-      )
+      const label = named ? named.name : `star ${star.id}`
+
+      // Second click on the same star within a few seconds means "go".
+      const now = performance.now()
+      if (this.lastPickId === star.id && now - this.lastPickAt < 4000) {
+        this.host.travelToStar(star)
+        this.writeUrlState('travel')
+        this.say(`en route to ${label} — ${(distancePc * 3.2616).toFixed(1)} ly from Sol`)
+      } else {
+        this.say(
+          `${label} — mag ${star.mag.toFixed(1)}, ` +
+            `${distancePc.toFixed(2)} pc (${(distancePc * 3.2616).toFixed(1)} ly) from Sol — ` +
+            `click again to travel`,
+        )
+      }
+      this.lastPickId = star.id
+      this.lastPickAt = now
       this.updateCruise()
     }
   }
@@ -173,9 +194,88 @@ export class NavPanel {
         option.value = n.name
         datalist.appendChild(option)
       }
+      this.populateBrowse()
     } catch {
       this.say('star names unavailable')
     }
+  }
+
+  /**
+   * A browsable catalog of destinations, for people who do not arrive
+   * already knowing a star name: the planets, the nearest named stars with
+   * their distances, and the brightest. Choosing an entry travels there —
+   * browsing IS going.
+   */
+  private populateBrowse(): void {
+    const select = this.q<HTMLSelectElement>('[data-k="browse"]')
+
+    // Retries after a partial catalog rebuild the whole list; start clean.
+    for (const group of [...select.querySelectorAll('optgroup')]) group.remove()
+
+    const planets = document.createElement('optgroup')
+    planets.label = 'solar system'
+    for (const p of ['sun', 'mercury', 'venus', 'earth', 'mars', 'jupiter', 'saturn', 'uranus', 'neptune', 'pluto']) {
+      planets.appendChild(new Option(p, `planet:${p}`))
+    }
+    select.appendChild(planets)
+
+    const withDistance = this.names
+      .map((n) => {
+        const star = this.host.starField.byId(n.id)
+        if (!star) return null
+        return { ...n, distancePc: Math.hypot(star.xPc, star.yPc, star.zPc) }
+      })
+      .filter((n): n is NamedStar & { distancePc: number } => n !== null)
+
+    if (withDistance.length === 0) {
+      // Catalog still streaming; try again shortly.
+      setTimeout(() => this.populateBrowse(), 1000)
+      return
+    }
+
+    const nearest = document.createElement('optgroup')
+    nearest.label = 'nearest named stars'
+    for (const n of [...withDistance].sort((a, b) => a.distancePc - b.distancePc).slice(0, 30)) {
+      nearest.appendChild(
+        new Option(`${n.name} — ${(n.distancePc * 3.2616).toFixed(1)} ly`, `star:${n.name}`),
+      )
+    }
+    select.appendChild(nearest)
+
+    const brightest = document.createElement('optgroup')
+    brightest.label = 'brightest stars'
+    for (const n of withDistance.slice(0, 40)) {
+      brightest.appendChild(
+        new Option(`${n.name} — mag ${n.mag.toFixed(1)}`, `star:${n.name}`),
+      )
+    }
+    select.appendChild(brightest)
+
+    if (select.dataset['wired'] === '1') return
+    select.dataset['wired'] = '1'
+    select.addEventListener('change', () => {
+      const value = select.value
+      select.value = ''
+      if (!value) return
+      if (value.startsWith('planet:')) {
+        const body = value.slice(7)
+        this.host.clearRoute()
+        this.host.setFocus(body === 'pluto' || body === 'sun' ? body : body)
+        this.host.frameDistanceAu(body === 'sun' ? 12 : 0.4)
+        this.say(`focused on ${body}`)
+        return
+      }
+      const name = value.slice(5)
+      this.q<HTMLInputElement>('#nav-dest').value = name
+      const star = this.findDestination()
+      if (star) {
+        this.host.travelToStar(star)
+        this.writeUrlState('travel')
+        const distancePc = Math.hypot(star.xPc, star.yPc, star.zPc)
+        this.say(`en route to ${name} — ${(distancePc * 3.2616).toFixed(1)} ly from Sol`)
+        this.updateCruise()
+      }
+    })
   }
 
   private jumpRangePc(): number {
