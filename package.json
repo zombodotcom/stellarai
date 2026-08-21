@@ -3,7 +3,7 @@
   "private": true,
   "version": "0.0.0",
   "type": "module",
-  "description": "Conversational 3D stellar navigator — real orbital mechanics, atmospheric entry, and interstellar routing in the browser.",
+  "description": "Conversational 3D stellar navigator \u00e2\u20ac\u201d real orbital mechanics, atmospheric entry, and interstellar routing in the browser.",
   "engines": {
     "node": ">=22"
   },
@@ -18,7 +18,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc --build --force",
-    "lint": "eslint ."
+    "lint": "eslint .",
+    "deploy": "npm run build-catalog -w @stellarai/pipeline && npm run deploy -w @stellarai/web"
   },
   "devDependencies": {
     "@types/node": "^22.19.0",

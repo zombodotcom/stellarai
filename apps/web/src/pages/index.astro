@@ -239,6 +239,54 @@
         font-size: 0.7rem;
         min-height: 0.9rem;
       }
+      #panel-tabs {
+        display: none;
+      }
+      @media (max-width: 820px) {
+        #hud,
+        #entry-panel,
+        #nav-panel,
+        #transfer-panel {
+          display: none;
+          position: fixed;
+          left: 0.5rem;
+          right: 0.5rem;
+          bottom: 3.4rem;
+          top: auto;
+          width: auto;
+          max-height: 55vh;
+          overflow-y: auto;
+        }
+        #hud.open,
+        #entry-panel.open,
+        #nav-panel.open,
+        #transfer-panel.open {
+          display: block;
+        }
+        #panel-tabs {
+          display: flex;
+          position: fixed;
+          left: 0;
+          right: 0;
+          bottom: 0;
+          gap: 1px;
+          background: #10182c;
+          border-top: 1px solid #24304a;
+          z-index: 10;
+        }
+        #panel-tabs button {
+          flex: 1;
+          border: none;
+          border-radius: 0;
+          padding: 0.6rem 0.2rem;
+          font-size: 0.75rem;
+          background: rgba(4, 8, 20, 0.92);
+        }
+        #panel-tabs button[data-active='true'] {
+          color: #fff;
+          background: #16233f;
+        }
+      }
       .star-label {
         position: fixed;
         top: 0;
@@ -300,6 +348,13 @@
       </div>
     </div>
 
+    <div id="panel-tabs">
+      <button data-panel="hud">time</button>
+      <button data-panel="nav-panel">navigate</button>
+      <button data-panel="transfer-panel">missions</button>
+      <button data-panel="entry-panel">entry</button>
+    </div>
+
     <script>
       import { SolarSystemRenderer } from '../engine/SolarSystemRenderer'
       import { EntryPanel } from '../engine/EntryPanel'
@@ -327,6 +382,25 @@
 
       const focusSelect = document.getElementById('focus') as HTMLSelectElement
       focusSelect.addEventListener('change', () => engine.setFocus(focusSelect.value))
+
+      // Mobile tab bar: one panel open at a time; tapping the active tab
+      // closes it so the sky is never permanently covered.
+      const tabs = document.getElementById('panel-tabs')!
+      tabs.addEventListener('click', (e) => {
+        const button = (e.target as HTMLElement).closest('button')
+        if (!button) return
+        const id = button.dataset.panel!
+        const target = document.getElementById(id)!
+        const opening = !target.classList.contains('open')
+        for (const b of tabs.querySelectorAll('button')) b.dataset.active = 'false'
+        for (const panelId of ['hud', 'nav-panel', 'transfer-panel', 'entry-panel']) {
+          document.getElementById(panelId)?.classList.remove('open')
+        }
+        if (opening) {
+          target.classList.add('open')
+          button.dataset.active = 'true'
+        }
+      })
 
       const rates = document.getElementById('rates')!
       rates.addEventListener('click', (e) => {
