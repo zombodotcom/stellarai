@@ -52,7 +52,7 @@ async function main(): Promise<void> {
 
   console.log('parsing...')
   const csv = gunzipSync(readFileSync(cachePath)).toString('utf-8')
-  const stars = parseAthygCsv(csv, { collectStats: true })
+  const stars = parseAthygCsv(csv, { collectStats: true, collectNames: true })
   console.log(
     `parsed ${stars.length.toLocaleString()} stars`,
     JSON.stringify(stars.stats),
@@ -75,6 +75,11 @@ async function main(): Promise<void> {
     }
   }
   writeFileSync(join(outDir, 'manifest.json'), JSON.stringify(plan.manifest))
+
+  // Proper-name sidecar for search: small, human-facing, brightest first.
+  const names = (stars.names ?? []).sort((a, b) => a.mag - b.mag)
+  writeFileSync(join(outDir, 'names.json'), JSON.stringify(names))
+  console.log(`wrote ${names.length} proper names to names.json`)
 
   console.log(
     `wrote ${plan.manifest.chunks.length} chunks, ` +

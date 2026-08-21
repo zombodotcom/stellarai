@@ -84,3 +84,25 @@ describe('parseAthygCsv', () => {
     expect(() => parseAthygCsv('a,b,c\n1,2,3')).toThrow(/column/i)
   })
 })
+
+describe('name collection', () => {
+  const NAMED =
+    '71681,,,71454,71681,128620,5459,559A,Alp1,,Cen,Rigil Kentaurus,14.66,-60.83,H,1.3248,-0.4967,-0.4227,-1.1522,H,-0.01,4.38,0.71,H,-21.4,H,-3679.25,473.67,H,-29.29,1.71,13.99,G2 V,H'
+  const HEADER =
+    'id,tyc,gaia,hyg,hip,hd,hr,gl,bayer,flam,con,proper,ra,dec,pos_src,dist,x0,y0,z0,dist_src,mag,absmag,ci,mag_src,rv,rv_src,pmra,pmdec,pm_src,vx,vy,vz,spect,spect_src'
+  const UNNAMED =
+    '2,4669-731-1,2443095153084654208,,,224701,,,,,Psc,,2.263e-05,-5.49436227,T,509.1956,506.8562,0.003,-48.7544,G_R3,9.239,0.705,1.117,T,-17.371,G_R3,22.5,-11.3,G_R3,-19.9,54.31,-25.49,G8 IV,T'
+
+  test('collects proper names alongside the records when asked', () => {
+    const result = parseAthygCsv([HEADER, NAMED, UNNAMED].join('\n'), { collectNames: true })
+    expect(result.length).toBe(2)
+    expect(result.names).toEqual([{ id: 71681, name: 'Rigil Kentaurus', mag: -0.01 }])
+  })
+
+  test('does not collect names for stars that were dropped', () => {
+    const droppedNamed = NAMED.replace('-0.4967,-0.4227,-1.1522', ',,')
+    const result = parseAthygCsv([HEADER, droppedNamed].join('\n'), { collectNames: true })
+    expect(result.length).toBe(0)
+    expect(result.names).toEqual([])
+  })
+})

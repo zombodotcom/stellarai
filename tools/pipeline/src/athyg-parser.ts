@@ -30,9 +30,17 @@ export interface ParseStats {
 
 export interface ParseOptions {
   collectStats?: boolean
+  /** Also collect IAU proper names, for a search sidecar. */
+  collectNames?: boolean
 }
 
-export type ParseResult = StarRecord[] & { stats?: ParseStats }
+export interface NamedStar {
+  id: number
+  name: string
+  mag: number
+}
+
+export type ParseResult = StarRecord[] & { stats?: ParseStats; names?: NamedStar[] }
 
 /** Split one CSV line, honouring double-quoted fields. */
 function splitCsvLine(line: string): string[] {
@@ -79,6 +87,7 @@ export function parseAthygCsv(csv: string, options: ParseOptions = {}): ParseRes
 
   const stats: ParseStats = { parsed: 0, droppedNoPosition: 0, droppedNoMagnitude: 0, droppedSol: 0 }
   const stars: ParseResult = [] as ParseResult
+  const names: NamedStar[] = []
 
   for (let i = 1; i < lines.length; i++) {
     const line = lines[i]!
@@ -113,8 +122,14 @@ export function parseAthygCsv(csv: string, options: ParseOptions = {}): ParseRes
       return Number.isFinite(v) ? v : 0
     }
 
+    const id = Number(f[iId])
+    const proper = iProper >= 0 ? f[iProper] : undefined
+    if (proper !== undefined && proper !== '' && options.collectNames) {
+      names.push({ id, name: proper, mag })
+    }
+
     stars.push({
-      id: Number(f[iId]),
+      id,
       xPc: x,
       yPc: y,
       zPc: z,
@@ -128,5 +143,6 @@ export function parseAthygCsv(csv: string, options: ParseOptions = {}): ParseRes
   }
 
   if (options.collectStats) stars.stats = stats
+  if (options.collectNames) stars.names = names
   return stars
 }

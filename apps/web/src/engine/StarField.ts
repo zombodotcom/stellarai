@@ -83,6 +83,14 @@ export interface StarFieldStatus {
   starsLoaded: number
 }
 
+export interface LoadedStar {
+  id: number
+  xPc: number
+  yPc: number
+  zPc: number
+  mag: number
+}
+
 export class StarField {
   private readonly material = new THREE.ShaderMaterial({
     vertexShader: VERTEX_SHADER,
@@ -94,6 +102,18 @@ export class StarField {
 
   private status: StarFieldStatus = { chunksLoaded: 0, chunksTotal: 0, starsLoaded: 0 }
   onProgress: ((status: StarFieldStatus) => void) | null = null
+
+  /**
+   * Every decoded star, kept for routing and lookup. Positions in parsecs.
+   * ~867k entries costs on the order of 100 MB -- acceptable on desktop; a
+   * typed-array layout is the known optimisation if it ever matters.
+   */
+  readonly stars: LoadedStar[] = []
+  private readonly starById = new Map<number, LoadedStar>()
+
+  byId(id: number): LoadedStar | undefined {
+    return this.starById.get(id)
+  }
 
   /**
    * Stream every chunk in manifest order (brightest band first) into the
@@ -113,6 +133,11 @@ export class StarField {
         const response = await fetch(`${baseUrl}/${chunk.file}`)
         if (!response.ok) throw new Error(`HTTP ${response.status}`)
         const stars = decodeChunk(await response.arrayBuffer())
+        for (const s of stars) {
+          const loaded: LoadedStar = { id: s.id, xPc: s.xPc, yPc: s.yPc, zPc: s.zPc, mag: s.mag }
+          this.stars.push(loaded)
+          this.starById.set(s.id, loaded)
+        }
         parent.add(this.buildPoints(stars))
         this.status.chunksLoaded++
         this.status.starsLoaded += stars.length

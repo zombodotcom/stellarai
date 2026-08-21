@@ -22,7 +22,10 @@ import {
   type TierId,
 } from '@stellarai/scale-graph'
 import { heliocentricState, type PlanetId } from '@stellarai/astro-core'
-import { StarField, type StarFieldStatus } from './StarField.js'
+import { StarField, type LoadedStar, type StarFieldStatus } from './StarField.js'
+
+/** Astronomical units per parsec. */
+const AU_PER_PC = 206_264.8
 
 const PLANETS: readonly PlanetId[] = [
   'mercury',
@@ -101,12 +104,22 @@ export class SolarSystemRenderer {
   private epoch: Date
   /** Simulated seconds per wall-clock second. */
   timeRate = 0
-  /** Camera spherical coordinates around the current focus frame. */
-  private focus = 'sun'
+  /**
+   * What the camera orbits: a solar-system frame, or a fixed point in
+   * barycentric AU space (a star). `focusCurrent` eases toward the target
+   * each tick so travel reads as a flight, not a cut.
+   */
+  private focusTarget:
+    | { kind: 'frame'; id: string }
+    | { kind: 'point'; x: number; y: number; z: number } = { kind: 'frame', id: 'sun' }
+  private focusCurrent = { x: 0, y: 0, z: 0 }
   private distanceAu = 12
+  private distanceTargetAu = 12
   private theta = 0.6
   private phi = 1.1
   private disposed = false
+  readonly starField = new StarField()
+  private routeLine: THREE.Line | null = null
 
   constructor(options: RendererOptions) {
     this.epoch = options.epoch ?? new Date()
@@ -129,9 +142,8 @@ export class SolarSystemRenderer {
     // Stream the star catalog into the same barycentric group: positions
     // arrive in parsecs and render in AU, so the existing camera-relative
     // rebasing covers them.
-    const starField = new StarField()
-    starField.onProgress = (s) => this.onStarProgress?.(s)
-    void starField.load(this.frameGroups.get('ssb')!)
+    this.starField.onProgress = (s) => this.onStarProgress?.(s)
+    void this.starField.load(this.frameGroups.get('ssb')!)
   }
 
   /** Reports catalog streaming progress, for a HUD to display. */
@@ -191,22 +203,40 @@ export class SolarSystemRenderer {
 
   // ---- per-frame update ----------------------------------------------------
 
-  private syncFromGraph(): void {
-    // Camera: orbiting the focused body at distanceAu.
-    const focusOrigin = { frame: this.focus, x: 0, y: 0, z: 0 }
+  /** Where the focus target sits right now, in barycentric AU. */
+  private resolveFocusTarget(): { x: number; y: number; z: number } {
+    if (this.focusTarget.kind === 'point') {
+      return this.focusTarget
+    }
+    this.graph.setCamera({ frame: 'ssb', x: 0, y: 0, z: 0 })
+    const m = this.graph.toRenderSpace({ frame: this.focusTarget.id, x: 0, y: 0, z: 0 })
+    return { x: m.x / AU_M, y: m.y / AU_M, z: m.z / AU_M }
+  }
+
+  private syncFromGraph(dt: number): void {
+    // Ease the focus point and orbit distance toward their targets, so
+    // travel between stars is a flight rather than a cut. Distance eases in
+    // log space, because travel spans many decades of scale.
+    const target = this.resolveFocusTarget()
+    const k = 1 - Math.exp(-3 * dt)
+    this.focusCurrent.x += (target.x - this.focusCurrent.x) * k
+    this.focusCurrent.y += (target.y - this.focusCurrent.y) * k
+    this.focusCurrent.z += (target.z - this.focusCurrent.z) * k
+    this.distanceAu = Math.exp(
+      Math.log(this.distanceAu) +
+        (Math.log(this.distanceTargetAu) - Math.log(this.distanceAu)) * k,
+    )
+
     const off = {
       x: this.distanceAu * Math.cos(this.phi) * Math.cos(this.theta),
       y: this.distanceAu * Math.cos(this.phi) * Math.sin(this.theta),
       z: this.distanceAu * Math.sin(this.phi),
     }
-    // Express the camera in the SSB frame: focus origin lifted + offset in AU.
-    this.graph.setCamera({ frame: 'ssb', x: 0, y: 0, z: 0 })
-    const focusInSsbM = this.graph.toRenderSpace(focusOrigin)
     this.graph.setCamera({
       frame: 'ssb',
-      x: focusInSsbM.x / AU_M + off.x,
-      y: focusInSsbM.y / AU_M + off.y,
-      z: focusInSsbM.z / AU_M + off.z,
+      x: this.focusCurrent.x + off.x,
+      y: this.focusCurrent.y + off.y,
+      z: this.focusCurrent.z + off.z,
     })
 
     // Rebase the SSB group: its origin, camera-relative, in solar-tier units.
@@ -225,11 +255,15 @@ export class SolarSystemRenderer {
       marker?.position.set(s.positionM.x / AU_M, s.positionM.y / AU_M, s.positionM.z / AU_M)
     }
 
-    // three.js camera sits at the render-space origin looking at the focus.
+    // three.js camera sits at the render-space origin looking at the focus:
+    // the focus point in barycentric AU plus the rebased ssb group offset.
     this.camera3.position.set(0, 0, 0)
-    const focusRender = this.graph.toTierUnits(tier, this.graph.toRenderSpace(focusOrigin))
     this.camera3.up.set(0, 0, 1)
-    this.camera3.lookAt(focusRender.x, focusRender.y, focusRender.z)
+    this.camera3.lookAt(
+      this.focusCurrent.x + ssbOffset.x,
+      this.focusCurrent.y + ssbOffset.y,
+      this.focusCurrent.z + ssbOffset.z,
+    )
   }
 
   // ---- loop ----------------------------------------------------------------
@@ -247,7 +281,7 @@ export class SolarSystemRenderer {
       }
 
       this.resizeIfNeeded()
-      this.syncFromGraph()
+      this.syncFromGraph(Math.min(dt, 0.1))
       this.renderer.render(this.scene, this.camera3)
       requestAnimationFrame(tick)
     }
@@ -259,7 +293,45 @@ export class SolarSystemRenderer {
   }
 
   setFocus(body: string): void {
-    this.focus = body
+    this.focusTarget = { kind: 'frame', id: body }
+    this.distanceTargetAu = Math.min(this.distanceTargetAu, 200)
+  }
+
+  /** Fly to a catalog star and settle 40 AU away from it. */
+  travelToStar(star: LoadedStar): void {
+    this.focusTarget = {
+      kind: 'point',
+      x: star.xPc * AU_PER_PC,
+      y: star.yPc * AU_PER_PC,
+      z: star.zPc * AU_PER_PC,
+    }
+    this.distanceTargetAu = 40
+  }
+
+  /** Overview framing: pull back far enough to see a whole route. */
+  frameDistanceAu(distanceAu: number): void {
+    this.distanceTargetAu = Math.min(2e7, Math.max(0.05, distanceAu))
+  }
+
+  /** Draw a route as a polyline through its hop stars. Replaces any prior route. */
+  plotRoute(hops: readonly LoadedStar[]): void {
+    this.clearRoute()
+    const points = hops.map(
+      (h) => new THREE.Vector3(h.xPc * AU_PER_PC, h.yPc * AU_PER_PC, h.zPc * AU_PER_PC),
+    )
+    this.routeLine = new THREE.Line(
+      new THREE.BufferGeometry().setFromPoints(points),
+      new THREE.LineBasicMaterial({ color: 0x5fd77a, transparent: true, opacity: 0.9 }),
+    )
+    this.frameGroups.get('ssb')!.add(this.routeLine)
+  }
+
+  clearRoute(): void {
+    if (this.routeLine) {
+      this.routeLine.parent?.remove(this.routeLine)
+      this.routeLine.geometry.dispose()
+      this.routeLine = null
+    }
   }
 
   dispose(): void {
@@ -296,9 +368,9 @@ export class SolarSystemRenderer {
       (e) => {
         e.preventDefault()
         // Zoom out far enough to leave the solar system: 2e7 AU is ~97 pc.
-        this.distanceAu = Math.min(
+        this.distanceTargetAu = Math.min(
           2e7,
-          Math.max(0.05, this.distanceAu * (e.deltaY > 0 ? 1.15 : 1 / 1.15)),
+          Math.max(0.05, this.distanceTargetAu * (e.deltaY > 0 ? 1.15 : 1 / 1.15)),
         )
       },
       { passive: false },
