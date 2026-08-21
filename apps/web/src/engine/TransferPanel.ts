@@ -13,10 +13,13 @@
 import {
   AU_M,
   MU_SUN,
+  findAssistedRoutes,
   findTransferWindows,
   heliocentricState,
   propagateKepler,
   solveLambert,
+  type AssistedRoute,
+  type FlybyBody,
   type PlanetId,
   type TransferOption,
 } from '@stellarai/astro-core'
@@ -62,6 +65,9 @@ export class TransferPanel {
         <input type="number" data-k="year" min="2026" max="2060" step="1" value="2026" />
         <button data-k="scan">find launch windows</button>
       </div>
+      <div class="row">
+        <button data-k="assist">compare gravity assists</button>
+      </div>
       <div class="windows" data-v="windows"></div>
       <div class="note" data-v="note"></div>
     `
@@ -77,6 +83,7 @@ export class TransferPanel {
     destSelect.value = 'mars'
 
     this.q<HTMLButtonElement>('[data-k="scan"]').addEventListener('click', () => this.scan())
+    this.q<HTMLButtonElement>('[data-k="assist"]').addEventListener('click', () => this.assist())
   }
 
   private q<T extends Element>(sel: string): T {
@@ -147,6 +154,93 @@ export class TransferPanel {
       row.addEventListener('click', () => this.select(i, origin, destination))
       list.appendChild(row)
     })
+  }
+
+  /**
+   * Compare the direct transfer against single-flyby alternatives — the
+   * Mariner 10 question. The same physics that sent it via Venus: Lambert
+   * legs plus patched-conic flybys, priced honestly (an infeasible turn
+   * charges the burn that fixes it).
+   */
+  private assist(): void {
+    const origin = this.q<HTMLSelectElement>('[data-k="origin"]').value as FlybyBody
+    const destination = this.q<HTMLSelectElement>('[data-k="destination"]').value as FlybyBody
+    const year = Number(this.q<HTMLInputElement>('[data-k="year"]').value)
+    if (origin === destination) {
+      this.note('origin and destination are the same planet')
+      return
+    }
+    this.note('comparing direct vs gravity-assist routes…')
+    this.q<HTMLElement>('[data-v="windows"]').replaceChildren()
+
+    requestAnimationFrame(() => {
+      const started = performance.now()
+      const routes = findAssistedRoutes({
+        origin,
+        destination,
+        departureStart: new Date(Date.UTC(year, 0, 1)),
+        departureEnd: new Date(Date.UTC(year + 2, 0, 1)),
+        maxFlybys: 1,
+      })
+      const ms = performance.now() - started
+      if (routes.length === 0) {
+        this.note('no routes found in this window')
+        return
+      }
+      this.note(
+        `coarse-grid comparison in ${ms.toFixed(0)} ms — cheapest first; ` +
+          `costs are departure v∞ + flyby burns + arrival v∞`,
+      )
+
+      const list = this.q<HTMLElement>('[data-v="windows"]')
+      list.replaceChildren()
+      routes.forEach((route, i) => {
+        const row = document.createElement('button')
+        row.className = 'window-row'
+        const seq = route.sequence.map((b) => b.slice(0, 2).toUpperCase()).join('→')
+        const days = route.legs.reduce((n, l) => n + l.flightTimeDays, 0)
+        row.textContent =
+          `${seq.padEnd(9)} ${route.legs[0]!.departure.toISOString().slice(0, 10)} ` +
+          `${String(days).padStart(5)} d  Σ ${(route.totalCostMs / 1000).toFixed(2)} km/s`
+        row.addEventListener('click', () => this.selectAssisted(routes, i))
+        list.appendChild(row)
+      })
+      this.selectAssisted(routes, 0)
+    })
+  }
+
+  private selectAssisted(routes: AssistedRoute[], index: number): void {
+    const route = routes[index]
+    if (!route) return
+    for (const [i, el] of [...this.q<HTMLElement>('[data-v="windows"]').children].entries()) {
+      el.classList.toggle('selected', i === index)
+    }
+
+    // Draw every leg: re-solve each Lambert and sample the conic.
+    const points: Array<{ x: number; y: number; z: number }> = []
+    for (const leg of route.legs) {
+      const s1 = heliocentricState(leg.from as PlanetId, leg.departure)
+      const s2 = heliocentricState(leg.to as PlanetId, leg.arrival)
+      const tofS = leg.flightTimeDays * 86_400
+      let lambert
+      try {
+        lambert = solveLambert({
+          r1: s1.positionM,
+          r2: s2.positionM,
+          timeOfFlightS: tofS,
+          mu: MU_SUN,
+        })
+      } catch {
+        continue
+      }
+      const SAMPLES = 96
+      for (let i = 0; i <= SAMPLES; i++) {
+        const st = propagateKepler(s1.positionM, lambert.v1, (i / SAMPLES) * tofS, MU_SUN)
+        points.push({ x: st.position.x / AU_M, y: st.position.y / AU_M, z: st.position.z / AU_M })
+      }
+    }
+    this.host.plotTransfer(points)
+    this.host.setEpoch?.(route.legs[0]!.departure)
   }
 
   private select(index: number, origin: PlanetId, destination: PlanetId): void {

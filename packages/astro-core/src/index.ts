@@ -14,3 +14,5 @@ export * from './lambert.js'
 export * from './windows.js'
 export * from "./routing.js"
 export * from './kepler.js'
+export * from './flyby.js'
+export * from './mga.js'
