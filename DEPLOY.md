@@ -1,5 +1,8 @@
 # Deploying StellarAI
 
+Production: **https://stellarai.pages.dev** (Cloudflare Pages project
+`stellarai`).
+
 One-time setup:
 
 ```sh

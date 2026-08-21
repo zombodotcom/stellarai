@@ -1,5 +1,9 @@
 # StellarAI
 
+**Live at [stellarai.pages.dev](https://stellarai.pages.dev)** — try
+[a route to Proxima Centauri](https://stellarai.pages.dev/?to=Proxima%20Centauri&jump=6&accel=1&route=1)
+or [Aldebaran at 1 g](https://stellarai.pages.dev/?to=Aldebaran&jump=6&accel=1&route=1).
+
 **Fly through 867,492 real stars. Plot jump routes between them. Plan a real
 Mars mission. All in a browser, all free, every number from tested physics.**
 

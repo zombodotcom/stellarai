@@ -8,7 +8,7 @@
     "build": "astro build",
     "preview": "wrangler pages dev ./dist",
     "astro": "astro",
-    "deploy": "astro build && wrangler pages deploy ./dist --project-name stellarai"
+    "deploy": "astro build && wrangler pages deploy ./dist/client --project-name stellarai --branch main"
   },
   "dependencies": {
     "@stellarai/astro-core": "*",
