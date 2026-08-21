@@ -1,0 +1,9 @@
+{
+  "name": "@stellarai/pipeline",
+  "version": "0.0.0",
+  "type": "module",
+  "private": true,
+  "description": "Dev-time ETL: source catalogs to binary chunks.",
+  "scripts": { "build-catalog": "node --experimental-strip-types src/build-catalog.ts" },
+  "dependencies": { "@stellarai/catalog": "*" }
+}

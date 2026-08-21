@@ -144,6 +144,9 @@
         <span id="epoch"></span>
       </div>
       <div class="row">
+        <span id="stars" style="color: #64769a"></span>
+      </div>
+      <div class="row">
         <label for="focus">focus</label>
         <select id="focus">
           <option value="sun" selected>Sun</option>
@@ -172,6 +175,13 @@
 
       const canvas = document.getElementById('scene') as HTMLCanvasElement
       const engine = new SolarSystemRenderer({ canvas })
+      const starsLabel = document.getElementById('stars')!
+      engine.onStarProgress = (s) => {
+        starsLabel.textContent =
+          s.chunksLoaded === s.chunksTotal
+            ? `${s.starsLoaded.toLocaleString()} stars`
+            : `${s.starsLoaded.toLocaleString()} stars (${s.chunksLoaded}/${s.chunksTotal})`
+      }
       engine.start()
       new EntryPanel(document.body)
 

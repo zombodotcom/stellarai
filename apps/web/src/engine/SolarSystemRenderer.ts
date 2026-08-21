@@ -22,6 +22,7 @@ import {
   type TierId,
 } from '@stellarai/scale-graph'
 import { heliocentricState, type PlanetId } from '@stellarai/astro-core'
+import { StarField, type StarFieldStatus } from './StarField.js'
 
 const PLANETS: readonly PlanetId[] = [
   'mercury',
@@ -116,12 +117,25 @@ export class SolarSystemRenderer {
       antialias: true,
       logarithmicDepthBuffer: true,
     })
-    this.camera3 = new THREE.PerspectiveCamera(50, 1, 1e-4, 1e5)
+    // Far plane reaches 1e10 AU (~48 kpc): the logarithmic depth buffer
+    // keeps precision across it, so the solar system and the star field
+    // share one pass. Dedicated per-tier passes come with the galactic tier.
+    this.camera3 = new THREE.PerspectiveCamera(50, 1, 1e-4, 1e10)
     this.scene.background = new THREE.Color(0x02030a)
 
     this.buildScene()
     this.attachControls(options.canvas)
+
+    // Stream the star catalog into the same barycentric group: positions
+    // arrive in parsecs and render in AU, so the existing camera-relative
+    // rebasing covers them.
+    const starField = new StarField()
+    starField.onProgress = (s) => this.onStarProgress?.(s)
+    void starField.load(this.frameGroups.get('ssb')!)
   }
+
+  /** Reports catalog streaming progress, for a HUD to display. */
+  onStarProgress: ((status: StarFieldStatus) => void) | null = null
 
   // ---- scene construction (frame-local geometry only) ----------------------
 
@@ -281,8 +295,9 @@ export class SolarSystemRenderer {
       'wheel',
       (e) => {
         e.preventDefault()
+        // Zoom out far enough to leave the solar system: 2e7 AU is ~97 pc.
         this.distanceAu = Math.min(
-          200,
+          2e7,
           Math.max(0.05, this.distanceAu * (e.deltaY > 0 ? 1.15 : 1 / 1.15)),
         )
       },
