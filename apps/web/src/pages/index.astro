@@ -1,19 +1,133 @@
 ---
-// Phase 0 placeholder. The engine island lands in Phase 2.
-const phase = 'Phase 0 — scaffold'
+// The engine island. Everything below the fold is client-side three.js;
+// the physics lives in @stellarai/astro-core and @stellarai/scale-graph,
+// both fully unit-tested — this page only hosts the canvas and controls.
 ---
+
 <!doctype html>
 <html lang="en">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <title>StellarAI</title>
+    <style>
+      :root {
+        color-scheme: dark;
+      }
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        background: #02030a;
+        color: #cdd6e8;
+        font-family: system-ui, sans-serif;
+        overflow: hidden;
+      }
+      #scene {
+        display: block;
+        width: 100vw;
+        height: 100vh;
+        touch-action: none;
+      }
+      #hud {
+        position: fixed;
+        top: 0.75rem;
+        left: 0.75rem;
+        display: flex;
+        flex-direction: column;
+        gap: 0.5rem;
+        background: rgba(4, 8, 20, 0.72);
+        border: 1px solid #24304a;
+        border-radius: 0.5rem;
+        padding: 0.75rem 1rem;
+        font-size: 0.85rem;
+        backdrop-filter: blur(4px);
+      }
+      #hud h1 {
+        margin: 0;
+        font-size: 1rem;
+        letter-spacing: 0.08em;
+        font-weight: 600;
+      }
+      #hud .row {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+      }
+      #epoch {
+        font-variant-numeric: tabular-nums;
+        color: #8fa3c8;
+      }
+      select,
+      button {
+        background: #0b1224;
+        color: #cdd6e8;
+        border: 1px solid #2b3a5c;
+        border-radius: 0.3rem;
+        padding: 0.2rem 0.5rem;
+        font-size: 0.85rem;
+      }
+      button[data-active='true'] {
+        border-color: #6b93d6;
+        color: #fff;
+      }
+    </style>
   </head>
   <body>
-    <main>
+    <canvas id="scene"></canvas>
+    <div id="hud">
       <h1>StellarAI</h1>
-      <p>Conversational 3D stellar navigator.</p>
-      <p>{phase}</p>
-    </main>
+      <div class="row">
+        <span id="epoch"></span>
+      </div>
+      <div class="row">
+        <label for="focus">focus</label>
+        <select id="focus">
+          <option value="sun" selected>Sun</option>
+          <option value="mercury">Mercury</option>
+          <option value="venus">Venus</option>
+          <option value="earth">Earth</option>
+          <option value="mars">Mars</option>
+          <option value="jupiter">Jupiter</option>
+          <option value="saturn">Saturn</option>
+          <option value="uranus">Uranus</option>
+          <option value="neptune">Neptune</option>
+          <option value="pluto">Pluto</option>
+        </select>
+      </div>
+      <div class="row" id="rates">
+        <button data-rate="0" data-active="true">pause</button>
+        <button data-rate="86400">1 d/s</button>
+        <button data-rate="2592000">30 d/s</button>
+        <button data-rate="31557600">1 yr/s</button>
+      </div>
+    </div>
+
+    <script>
+      import { SolarSystemRenderer } from '../engine/SolarSystemRenderer'
+
+      const canvas = document.getElementById('scene') as HTMLCanvasElement
+      const engine = new SolarSystemRenderer({ canvas })
+      engine.start()
+
+      const epochLabel = document.getElementById('epoch')!
+      setInterval(() => {
+        epochLabel.textContent = engine.currentEpoch.toISOString().slice(0, 19) + 'Z'
+      }, 100)
+
+      const focusSelect = document.getElementById('focus') as HTMLSelectElement
+      focusSelect.addEventListener('change', () => engine.setFocus(focusSelect.value))
+
+      const rates = document.getElementById('rates')!
+      rates.addEventListener('click', (e) => {
+        const button = (e.target as HTMLElement).closest('button')
+        if (!button) return
+        engine.timeRate = Number(button.dataset.rate)
+        for (const b of rates.querySelectorAll('button')) {
+          b.dataset.active = String(b === button)
+        }
+      })
+    </script>
   </body>
 </html>

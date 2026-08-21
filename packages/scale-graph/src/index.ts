@@ -136,6 +136,16 @@ export class ScaleGraph {
     this.frames.set(frame.id, frame)
   }
 
+  /**
+   * Move a frame's origin within its parent. This is how time advances:
+   * planet frames are re-anchored to fresh ephemeris positions rather than
+   * rebuilt, so the graph's structure and consumers' references survive.
+   */
+  setFrameOrigin(id: string, originInParent: Vec3): void {
+    const f = this.frame(id)
+    this.frames.set(id, { ...f, originInParent: { ...originInParent } })
+  }
+
   private frame(id: string): Frame {
     const found = this.frames.get(id)
     if (!found) throw new Error(`Unknown frame: ${id}`)
@@ -260,3 +270,5 @@ export class ScaleGraph {
     return { x: offsetM.x / unitM, y: offsetM.y / unitM, z: offsetM.z / unitM }
   }
 }
+
+export * from './solar-frames.js'
