@@ -11,7 +11,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <title>StellarAI</title>
-    <style>
+    <style is:global>
       :root {
         color-scheme: dark;
       }
@@ -72,6 +72,68 @@
         border-color: #6b93d6;
         color: #fff;
       }
+      #entry-panel {
+        position: fixed;
+        top: 0.75rem;
+        right: 0.75rem;
+        width: 292px;
+        background: rgba(4, 8, 20, 0.72);
+        border: 1px solid #24304a;
+        border-radius: 0.5rem;
+        padding: 0.75rem 1rem;
+        font-size: 0.8rem;
+        backdrop-filter: blur(4px);
+      }
+      #entry-panel h2 {
+        margin: 0 0 0.5rem;
+        font-size: 0.85rem;
+        letter-spacing: 0.06em;
+        font-weight: 600;
+        color: #8fa3c8;
+      }
+      #entry-panel .row {
+        display: grid;
+        grid-template-columns: 6.2rem 1fr 4.6rem;
+        align-items: center;
+        gap: 0.4rem;
+        margin: 0.25rem 0;
+      }
+      #entry-panel .row span {
+        text-align: right;
+        font-variant-numeric: tabular-nums;
+        color: #8fa3c8;
+      }
+      #entry-panel input[type='range'] {
+        width: 100%;
+      }
+      #entry-panel .readout {
+        display: flex;
+        gap: 1rem;
+        margin: 0.6rem 0 0.4rem;
+      }
+      #entry-panel .readout div {
+        display: flex;
+        flex-direction: column;
+      }
+      #entry-panel .readout span {
+        font-size: 0.95rem;
+        color: #fff;
+        font-variant-numeric: tabular-nums;
+      }
+      #entry-panel .readout small {
+        color: #64769a;
+      }
+      #entry-panel svg {
+        width: 100%;
+        background: rgba(10, 16, 34, 0.6);
+        border-radius: 0.3rem;
+      }
+      #entry-panel .note {
+        margin: 0.5rem 0 0;
+        color: #64769a;
+        font-size: 0.68rem;
+        line-height: 1.35;
+      }
     </style>
   </head>
   <body>
@@ -106,10 +168,12 @@
 
     <script>
       import { SolarSystemRenderer } from '../engine/SolarSystemRenderer'
+      import { EntryPanel } from '../engine/EntryPanel'
 
       const canvas = document.getElementById('scene') as HTMLCanvasElement
       const engine = new SolarSystemRenderer({ canvas })
       engine.start()
+      new EntryPanel(document.body)
 
       const epochLabel = document.getElementById('epoch')!
       setInterval(() => {

@@ -97,16 +97,8 @@ export interface EntryProfile {
   peakHeatFlux: PeakHeatFlux
 }
 
-/** Compute the peak deceleration and peak stagnation heat flux of a ballistic entry. */
-export function ballisticEntryProfile(params: EntryParams): EntryProfile {
-  const {
-    body,
-    entryVelocityMs: ve,
-    flightPathAngleDeg,
-    ballisticCoefficientKgM2: beta,
-    noseRadiusM,
-  } = params
-
+function validateEntryParams(params: EntryParams): void {
+  const { flightPathAngleDeg, ballisticCoefficientKgM2: beta, noseRadiusM, entryVelocityMs: ve } = params
   if (flightPathAngleDeg >= 0) {
     throw new Error(
       `Entry flight path angle must be negative (descending); got ${flightPathAngleDeg} deg.`,
@@ -122,6 +114,19 @@ export function ballisticEntryProfile(params: EntryParams): EntryProfile {
   if (!(beta > 0)) throw new Error('Ballistic coefficient must be positive.')
   if (!(noseRadiusM > 0)) throw new Error('Nose radius must be positive.')
   if (!(ve > 0)) throw new Error('Entry velocity must be positive.')
+}
+
+/** Compute the peak deceleration and peak stagnation heat flux of a ballistic entry. */
+export function ballisticEntryProfile(params: EntryParams): EntryProfile {
+  const {
+    body,
+    entryVelocityMs: ve,
+    flightPathAngleDeg,
+    ballisticCoefficientKgM2: beta,
+    noseRadiusM,
+  } = params
+
+  validateEntryParams(params)
 
   const atmosphere = ATMOSPHERES[body]
   const { surfaceDensityKgM3: rho0, scaleHeightM: H, suttonGravesK: K } = atmosphere
@@ -152,4 +157,59 @@ export function ballisticEntryProfile(params: EntryParams): EntryProfile {
       velocityMs: vAtPeakHeat,
     },
   }
+}
+
+export interface EntryTrajectoryPoint {
+  altitudeM: number
+  velocityMs: number
+  decelerationMs2: number
+  heatFluxWm2: number
+}
+
+/**
+ * Sample the full closed-form trajectory, top of the atmosphere to below
+ * peak deceleration.
+ *
+ * The same Allen-Eggers relations that give the peaks give the whole curve:
+ * with u = rho*H / (2*beta*sin|gamma|),
+ *
+ *   V(h) = Ve * exp(-u)
+ *   a(h) = rho * V^2 / (2*beta)
+ *   q(h) = K * sqrt(rho/Rn) * V^3
+ *
+ * Still closed form, so thousands of points cost microseconds and a UI can
+ * re-sample on every slider movement. The altitude span is chosen from u
+ * itself: from u = 0.005 (99.5% of entry velocity remaining) down to u = 4
+ * (under 2% remaining), which brackets both peaks (at u = 1/6 and u = 1/2)
+ * with margin on both sides.
+ */
+export function sampleEntryTrajectory(
+  params: EntryParams,
+  samples: number,
+): EntryTrajectoryPoint[] {
+  validateEntryParams(params)
+  if (!(samples >= 2)) throw new Error(`Sample count must be at least 2; got ${samples}.`)
+
+  const { body, entryVelocityMs: ve, ballisticCoefficientKgM2: beta, noseRadiusM } = params
+  const { surfaceDensityKgM3: rho0, scaleHeightM: H, suttonGravesK: K } = ATMOSPHERES[body]
+  const sinGamma = Math.sin(Math.abs(params.flightPathAngleDeg) * (Math.PI / 180))
+
+  const altitudeForU = (u: number) => H * Math.log((rho0 * H) / (2 * beta * sinGamma * u))
+  const top = altitudeForU(0.005)
+  const bottom = altitudeForU(4)
+
+  const points: EntryTrajectoryPoint[] = []
+  for (let i = 0; i < samples; i++) {
+    const altitudeM = top + (i / (samples - 1)) * (bottom - top)
+    const rho = rho0 * Math.exp(-altitudeM / H)
+    const u = (rho * H) / (2 * beta * sinGamma)
+    const velocityMs = ve * Math.exp(-u)
+    points.push({
+      altitudeM,
+      velocityMs,
+      decelerationMs2: (rho * velocityMs * velocityMs) / (2 * beta),
+      heatFluxWm2: K * Math.sqrt(rho / noseRadiusM) * velocityMs ** 3,
+    })
+  }
+  return points
 }
